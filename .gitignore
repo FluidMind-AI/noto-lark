@@ -12,3 +12,4 @@ lark/
 memory/user-memory/
 *.log
 .DS_Store
+notolark.yaml

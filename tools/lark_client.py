@@ -161,6 +161,11 @@ def lark_config() -> Dict[str, Any]:
 def _base_url() -> str:
     return lark_config().get("base_url", "https://open.larksuite.com").rstrip("/")
 
+def _tenant_url() -> str:
+    from config import load_config
+    return (load_config().get("lark", {})
+            .get("tenant_url", "")).rstrip("/")
+
 
 # ---------------------------------------------------------------------------
 # Rate limiting (token bucket; conservative defaults per Lark limits)
@@ -998,7 +1003,7 @@ class LarkClient:
                 block_id = ch.get("block_id", "")
                 break
         return {"document_id": doc_id,
-                "url": f"https://ajpzz5utq0e3.jp.larksuite.com/docx/{doc_id}",
+                "url": f"{_tenant_url()}/docx/{doc_id}",
                 "block_id": block_id}
 
     def update_text_doc(self, doc_id: str, content: str,

@@ -1336,7 +1336,7 @@ function renderHealth(el) {
           <div class="val">${esc(noT.val)}</div><div class="sub">${esc(noT.sub)}</div></div>
         <div class="tile ${d.funnel?.ok ? "ok" : "bad"}"><div class="lbl">Funnel</div>
           <div class="val">${d.funnel?.ok ? "serving" : "down"}</div>
-          <div class="sub">agents-mac-mini → 127.0.0.1</div></div>
+          <div class="sub">funnel → 127.0.0.1</div></div>
         <div class="tile ${d.resync?.running ? "ok" : ageClass(resyncM)}"><div class="lbl">Nightly resync</div>
           <div class="val">${d.resync?.running ? "running" : resyncM ? fmtAgo(resyncM) : "never"}</div>
           <div class="sub">${esc((d.resync?.last_done || "").slice(0, 40) || "no completion line found")}</div></div>

@@ -99,7 +99,7 @@ def _token_path(identity: Optional[str] = None) -> str:
 
 def _redirect_uri() -> str:
     cfg = load_config().get("lark", {}) or {}
-    host = cfg.get("funnel_host", "agents-mac-mini.taila67d50.ts.net")
+    host = cfg.get("funnel_host", "")
     return f"https://{host}/lark/oauth/callback"
 
 

@@ -98,7 +98,7 @@ def markdown_to_blocks(md: str) -> List[Dict[str, str]]:
 def _doc_url(document_id: str) -> str:
     from config import load_config
     base = ((load_config().get("lark", {}) or {})
-            .get("tenant_url", "https://ajpzz5utq0e3.jp.larksuite.com"))
+            .get("tenant_url", ""))
     return f"{base.rstrip('/')}/docx/{document_id}"
 
 
