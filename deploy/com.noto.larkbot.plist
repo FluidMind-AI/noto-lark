@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Noto Lark bot keep-alive agent.
+     Install (after Phase 1 credentials are set):
+       cp deploy/com.noto.larkbot.plist ~/Library/LaunchAgents/
+       launchctl load -w ~/Library/LaunchAgents/com.noto.larkbot.plist
+     Inspect:  launchctl list | grep com.noto.larkbot
+     Stop:     launchctl unload ~/Library/LaunchAgents/com.noto.larkbot.plist
+     Edit the paths below if the repo is not at /Users/noto/noto-home. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.noto.larkbot</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/noto/noto-home/tools/lark-bot-run.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/noto/noto-home</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LOLABOT_HOME</key>
+    <string>/Users/noto/noto-home</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/noto/noto-home/lark/larkbot.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/noto/noto-home/lark/larkbot.err.log</string>
+</dict>
+</plist>

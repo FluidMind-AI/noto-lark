@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Noto Lark OAuth keep-alive — refreshes the Noto user_token daily so
+     the access_token (2h TTL) AND refresh_token (7d TTL) stay alive
+     even if the bot is idle. Without this, after ~7 days of inactivity
+     the refresh_token dies and the operator has to re-authorize.
+
+     Install:
+       cp deploy/com.noto.larkkeepalive.plist ~/Library/LaunchAgents/
+       launchctl load -w ~/Library/LaunchAgents/com.noto.larkkeepalive.plist
+     Inspect:  launchctl list | grep com.noto.larkkeepalive
+     Stop:     launchctl unload ~/Library/LaunchAgents/com.noto.larkkeepalive.plist
+     Logs:     lark/oauth-keepalive.log AND lark/larkkeepalive.{out,err}.log -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.noto.larkkeepalive</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/noto/noto-home/tools/lark-keepalive.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/noto/noto-home</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LOLABOT_HOME</key>
+    <string>/Users/noto/noto-home</string>
+  </dict>
+
+  <!-- Daily at 03:00 local time. Cheap, predictable, well before any
+       business-hours organic API call would notice trouble. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>3</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <!-- And once at load time so the first run isn't 24h away. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/noto/noto-home/lark/larkkeepalive.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/noto/noto-home/lark/larkkeepalive.err.log</string>
+</dict>
+</plist>

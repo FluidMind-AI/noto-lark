@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+# --- runtime state & secrets (never commit) ---
+credentials.yaml
+brain/credentials.yaml
+brain/admin_session.secret
+brain/*.secret
+brain/*-state.json
+indexes/
+lark/
+memory/user-memory/
+*.log
+.DS_Store
