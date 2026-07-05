@@ -20,16 +20,16 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/noto/noto-home/tools/lark-keepalive.sh</string>
+    <string>/PATH/TO/noto-lark/tools/lark-keepalive.sh</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/noto/noto-home</string>
+  <string>/PATH/TO/noto-lark</string>
 
   <key>EnvironmentVariables</key>
   <dict>
     <key>LOLABOT_HOME</key>
-    <string>/Users/noto/noto-home</string>
+    <string>/PATH/TO/noto-lark</string>
   </dict>
 
   <!-- Daily at 03:00 local time. Cheap, predictable, well before any
@@ -45,8 +45,8 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/Users/noto/noto-home/lark/larkkeepalive.out.log</string>
+  <string>/PATH/TO/noto-lark/lark/larkkeepalive.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/noto/noto-home/lark/larkkeepalive.err.log</string>
+  <string>/PATH/TO/noto-lark/lark/larkkeepalive.err.log</string>
 </dict>
 </plist>

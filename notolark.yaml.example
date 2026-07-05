@@ -20,7 +20,7 @@ paths:
 
 corpus:
   drive_root: ""            # folder token: the Drive tree to ingest
-  wiki_spaces: []           # wiki space ids to ingest (empty = all visible)
+  wiki_root: ""             # wiki root node token to ingest (optional)
   outputs_folder: ""        # folder token where the bot saves docs it creates
 
 retrieval:

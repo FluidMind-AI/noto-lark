@@ -149,9 +149,6 @@ window.addEventListener("pagehide", () => {
 /* ── views registry ───────────────────────────────────────────────── */
 const ICONS = {
   inbox: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z"/></svg>',
-  pipeline: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v4H4z"/><path d="M6 12h12v4H6z"/><path d="M9 20h6"/></svg>',
-  candidates: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
-  recruiters: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>',
   health: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
   usecases: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
   admin: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
@@ -173,19 +170,6 @@ const VIEWS = {
     title: "Inbox", icon: "inbox", key: "i",
     badge: () => (state.counts.lessons ?? 0) + (state.counts.rules ?? 0) + (state.counts.nuggets ?? 0),
     render: (el) => renderInbox(el),
-  },
-  pipeline: {
-    title: "Pipeline", icon: "pipeline", key: "p",
-    badge: () => state.counts.open_polls ?? 0,
-    render: (el) => renderPipeline(el),
-  },
-  candidates: {
-    title: "Candidates", icon: "candidates", key: "c",
-    render: (el) => renderCandidates(el),
-  },
-  recruiters: {
-    title: "Recruiters", icon: "recruiters", key: "r",
-    render: (el) => renderRecruiters(el),
   },
   usecases: {
     title: "Use cases", icon: "usecases", key: "u",
@@ -356,13 +340,13 @@ function openPalette() {
     .map(([name, v]) => ({ label: v.title, hint: `g ${v.key}`, run: () => nav(name) }));
   paletteEl = h(`
     <div class="palette-overlay"><div class="palette">
-      <input placeholder="Jump to a workspace or search candidates…">
+      <input placeholder="Jump to a workspace…">
       <div class="results"></div>
     </div></div>`);
   document.body.appendChild(paletteEl);
   const input = $("input", paletteEl);
   const results = $(".results", paletteEl);
-  let cursor = 0, shown = items, candHits = [];
+  let cursor = 0, shown = items;
 
   function paint() {
     const blocks = [];
@@ -375,47 +359,21 @@ function openPalette() {
         blocks.push(el);
       });
     }
-    if (candHits.length) {
-      blocks.push(h(`<div class="group">Candidates</div>`));
-      candHits.forEach((c, j) => {
-        const i = shown.length + j;
-        const el = h(`<div class="item ${i === cursor ? "cursor" : ""}">
-          <span>${esc(c.name)}</span>
-          <span class="k muted" style="font-size:11px">${esc(c.practice || "")}</span></div>`);
-        el.onclick = () => { close(); c.run(); };
-        blocks.push(el);
-      });
-    }
     results.replaceChildren(...blocks);
     if (!blocks.length) results.replaceChildren(h(`<div class="empty-state">No matches</div>`));
   }
   function close() { paletteEl.remove(); paletteEl = null; }
-  const allShown = () => shown.concat(candHits);
 
-  let candDeb;
   input.oninput = () => {
     const q = input.value.trim().toLowerCase();
     shown = items.filter(it => it.label.toLowerCase().includes(q));
     cursor = 0; paint();
-    clearTimeout(candDeb);
-    if (q.length >= 2) {
-      candDeb = setTimeout(async () => {
-        try {
-          const d = await api(`/admin/api/candidates?q=${encodeURIComponent(q)}&limit=8`);
-          candHits = d.rows.map(r => ({
-            name: r.name, practice: r.practice,
-            run: () => { location.hash = `#/candidates/${encodeURIComponent(r.key)}`; },
-          }));
-        } catch { candHits = []; }
-        paint();
-      }, 200);
-    } else { candHits = []; paint(); }
   };
   input.onkeydown = (e) => {
     if (e.key === "Escape") close();
-    else if (e.key === "ArrowDown") { cursor = Math.min(cursor + 1, allShown().length - 1); paint(); }
+    else if (e.key === "ArrowDown") { cursor = Math.min(cursor + 1, shown.length - 1); paint(); }
     else if (e.key === "ArrowUp") { cursor = Math.max(cursor - 1, 0); paint(); }
-    else if (e.key === "Enter" && allShown()[cursor]) { close(); allShown()[cursor].run(); }
+    else if (e.key === "Enter" && shown[cursor]) { close(); shown[cursor].run(); }
   };
   paletteEl.onclick = (e) => { if (e.target === paletteEl) close(); };
   paint(); input.focus();
@@ -445,8 +403,8 @@ document.addEventListener("keydown", (e) => {
 function toggleHelp() {
   if (helpEl) { helpEl.remove(); helpEl = null; return; }
   const rows = [
-    ["⌘K", "command palette"], ["g i", "Inbox"], ["g p", "Pipeline"],
-    ["g c", "Candidates"], ["g r", "Recruiters"], ["g u", "Use cases"], ["g h", "Health"],
+    ["⌘K", "command palette"], ["g i", "Inbox"],
+    ["g u", "Use cases"], ["g h", "Health"],
     ["g a", "Admin"], ["j / k", "move row cursor"], ["x", "select row"],
     ["a", "approve"], ["r", "reject / dismiss"], ["e", "edit"],
     ["⏎", "open detail"], ["/", "focus filter"], ["Z", "undo last"],
@@ -1096,7 +1054,7 @@ function inboxRules(host) {
           body.appendChild(frag(`<h3>Rule</h3><p style="margin:0 0 6px">${esc(r.rule_text)}</p>
             <p class="muted" style="font-size:12px;margin:0">pattern <span class="mono">${esc(r.pattern_signature || "")}</span> · ${d.events.length} supporting edit(s)</p>`));
           for (const ev of d.events) {
-            body.appendChild(frag(`<h3>Event #${ev.id} — ${esc(ev.source)} · ${esc(ev.recruiter_name || "?")} (${esc(ev.authority || "standard")})</h3>
+            body.appendChild(frag(`<h3>Event #${ev.id} — ${esc(ev.source)} · ${esc(ev.user_name || "?")} (${esc(ev.authority || "standard")})</h3>
               <table class="kv">
                 ${ev.candidate ? `<tr><th>Candidate</th><td>${esc(ev.candidate)}</td></tr>` : ""}
                 ${ev.doc_url ? `<tr><th>Doc</th><td><a href="${esc(ev.doc_url)}" target="_blank" rel="noopener">open</a></td></tr>` : ""}
@@ -1294,7 +1252,7 @@ function inboxNuggets(host) {
   return { ...q, cleanup: () => { clearInterval(embedTimer); q.cleanup(); } };
 }
 
-/* ══ PIPELINE WORKSPACE (Phase 4, read-only) ═════════════════════════ */
+/* ══ DRAWER + DIFF HELPERS ══════════════════════════════════════════ */
 
 let drawerEl = null;
 function openDrawer(title, bodyEl) {
@@ -1311,17 +1269,6 @@ function openDrawer(title, bodyEl) {
 }
 function closeDrawer() { drawerEl?.remove(); drawerEl = null; }
 
-const verdictPill = (v) => ({
-  status_change: '<span class="pill ok">status change</span>',
-  calendar_event: '<span class="pill acc">calendar</span>',
-  both: '<span class="pill ok">both</span>',
-  ambiguous: '<span class="pill dim">ambiguous</span>',
-  noise: '<span class="pill dim">noise</span>',
-  stale_calendar: '<span class="pill dim">stale calendar</span>',
-  superseded: '<span class="pill dim">superseded</span>',
-  pipeline_event: '<span class="pill ok">pipeline event</span>',
-}[v] || (v ? `<span class="pill dim">${esc(v)}</span>` : '<span class="pill warn">unextracted</span>'));
-
 /* unified-diff → colored lines (added green, removed red, hunks muted) */
 function diffHtml(diff) {
   return diff.split("\n").map(l => {
@@ -1330,449 +1277,6 @@ function diffHtml(diff) {
       : l.startsWith("@@") ? "d-hunk" : "";
     return `<span class="${cls}">${esc(l)}</span>`;
   }).join("\n");
-}
-
-const pollPill = (s) => ({
-  open: '<span class="pill warn">open</span>',
-  approved: '<span class="pill ok">approved</span>',
-  rejected: '<span class="pill bad">rejected</span>',
-  edited: '<span class="pill acc">edited</span>',
-  expired: '<span class="pill dim">expired</span>',
-  error: '<span class="pill bad">error</span>',
-}[s] || (s ? `<span class="pill dim">${esc(s)}</span>` : ""));
-
-function renderPipeline(el) {
-  el.appendChild(h(`<div class="page-head">
-    <h1>Pipeline</h1>
-    <span class="sub">every inbound email → verdict → poll → what got written</span>
-  </div>`));
-
-  /* ── open polls: actionable, same contract as the Lark card ── */
-  const pollsPanel = h('<div></div>');
-  el.appendChild(pollsPanel);
-  async function loadPolls() {
-    let d;
-    try { d = await api("/admin/api/pipeline/polls"); }
-    catch { return; }
-    if (!d.polls?.length) { pollsPanel.replaceChildren(); return; }
-    pollsPanel.replaceChildren(h(`<div class="panel" style="border-color:var(--warn-bg)">
-      <div class="panel-head"><h2>Open polls · ${d.polls.length} awaiting a decision</h2></div>
-      <div class="panel-body flush"><table class="grid"><thead><tr>
-        <th class="primary">Proposed change</th><th>Type</th><th>Age</th><th>Expires</th><th></th>
-      </tr></thead><tbody>
-        ${d.polls.map(pl => {
-          const firmScope = pl.poll_type === "status_change" && (pl.scope === "firm"
-            || (!pl.scope && ["rejected", "on_hold"].includes(pl.proposed_status)));
-          return `<tr data-poll="${pl.id}" data-msg="${esc(pl.source_message_id || "")}" style="cursor:pointer">
-          <td class="primary"><b>${esc(pl.candidate_name || "?")}</b>
-            ${pl.proposed_status ? ` → <span class="pill ${firmScope ? "dim" : "acc"}">${esc(pl.proposed_status)}</span>` : ""}
-            ${pl.firm ? ` at <b>${esc(pl.firm)}</b>` : ""}
-            ${firmScope ? ' <span class="pill warn" title="approving writes a dated note under this firm in the summary doc — overall CRM status unchanged">firm note only</span>' : ""}
-            ${pl.note ? `<div class="muted" style="font-size:11.5px;margin-top:2px">${esc((pl.note || "").slice(0, 140))}</div>` : ""}
-            <div class="muted mono" style="font-size:11px;margin-top:2px">poll #${pl.id} · click for the source email &amp; reasoning</div></td>
-          <td><span class="pill dim">${esc(pl.poll_type)}</span></td>
-          <td class="muted nowrap">${fmtAgo(anyTs(pl.created_at))}</td>
-          <td class="muted nowrap">${pl.expires_in_s ? (pl.expires_in_s / 3600).toFixed(1) + "h" : "—"}</td>
-          <td><div class="rowactions" style="opacity:1">
-            <button class="btn sm ok" data-pa="approve">Approve</button>
-            <button class="btn sm danger" data-pa="reject">Reject</button>
-          </div></td>
-        </tr>`;}).join("")}
-      </tbody></table></div></div>`));
-    /* row click → the same evidence drawer as the email table below:
-       source email body, LLM extraction + reasoning, poll summary */
-    pollsPanel.querySelectorAll("tr[data-poll]").forEach(tr => {
-      tr.addEventListener("click", (e) => {
-        if (e.target.closest("button")) return;
-        if (tr.dataset.msg) openEmail({ message_id: tr.dataset.msg });
-        else notify("No source email recorded for this poll", "bad");
-      });
-    });
-    pollsPanel.querySelectorAll("[data-pa]").forEach(btn => btn.onclick = () => {
-      const tr = btn.closest("tr");
-      const pid = tr.dataset.poll;
-      const act = btn.dataset.pa;
-      tr.style.display = "none";
-      queueAction({
-        label: `${act === "approve" ? "Approving" : "Rejecting"} poll #${pid}`,
-        url: `/admin/api/pipeline/poll/${pid}/${act}`,
-        body: {},
-        onCommit: (res) => {
-          const ar = res.apply_result;
-          if (ar && ar.ok === false) notify(`Poll #${pid}: applied with issues — see drawer`, "bad", 6000);
-          loadPolls(); load(); refreshCounts();
-        },
-        onUndo: () => { tr.style.display = ""; },
-      });
-    });
-  }
-  loadPolls();
-
-  const chips = h('<div class="chips"></div>');
-  const fbar = h(`<div class="row" style="margin:0 0 12px;flex-wrap:wrap">
-    <input class="input" id="pf-cand" placeholder="Candidate…" style="max-width:190px">
-    <input class="input" id="pf-firm" placeholder="Firm…" style="max-width:190px">
-    <select class="input" id="pf-resolver" style="width:auto"><option value="">Anyone</option></select>
-    <label class="row" style="gap:5px;color:var(--ink-2);font-size:12.5px">
-      <input type="checkbox" id="pf-haspoll"> polls only</label>
-    <span class="muted" id="pf-count" style="margin-left:auto"></span>
-  </div>`);
-  const panel = h(`<div class="panel"><div class="panel-body flush">
-    <table class="grid"><thead><tr>
-      <th>When</th><th>Email</th><th>Verdict</th><th>Candidate</th><th>Firm</th>
-      <th>Poll</th><th>Applied</th>
-    </tr></thead><tbody></tbody></table>
-    <div style="padding:10px 14px"><button class="btn sm ghost" id="pf-more" style="display:none">Load more</button></div>
-  </div></div>`);
-  el.append(chips, fbar, panel);
-  const tbody = $("tbody", panel);
-
-  let rows = [], cursor = 0, verdict = "", nextBefore = null, loading = false;
-
-  async function load(append = false) {
-    if (loading) return; loading = true;
-    const qs = new URLSearchParams();
-    if (verdict) qs.set("verdict", verdict);
-    const cand = $("#pf-cand").value.trim(); if (cand) qs.set("candidate", cand);
-    const firm = $("#pf-firm").value.trim(); if (firm) qs.set("firm", firm);
-    const res = $("#pf-resolver").value; if (res) qs.set("resolved_by", res);
-    if ($("#pf-haspoll").checked) qs.set("has_poll", "1");
-    if (append && nextBefore) qs.set("before", nextBefore);
-    try {
-      const d = await api(`/admin/api/pipeline?${qs}`);
-      rows = append ? rows.concat(d.rows) : d.rows;
-      nextBefore = d.next_before;
-      paintChips(d.verdict_counts);
-      const sel = $("#pf-resolver");
-      if (sel.options.length <= 1 && d.facets.resolved_by?.length) {
-        d.facets.resolved_by.forEach(n => sel.appendChild(h(`<option>${esc(n)}</option>`)));
-      }
-      if (!append) cursor = 0;
-      paint();
-    } catch (e) { notify(e.message, "bad", 5000); }
-    loading = false;
-  }
-
-  function paintChips(counts) {
-    const entries = Object.entries(counts || {}).sort((a, b) => b[1] - a[1]);
-    chips.replaceChildren(
-      h(`<button class="chipstat ${verdict === "" ? "active" : ""}"><span>all</span><b>${entries.reduce((s, [, n]) => s + n, 0)}</b></button>`),
-      ...entries.map(([v, n]) =>
-        h(`<button class="chipstat ${verdict === v ? "active" : ""}"><span>${esc(v)}</span><b>${n}</b></button>`)));
-    [...chips.children].forEach((c, i) => c.onclick = () => {
-      verdict = i === 0 ? "" : entries[i - 1][0];
-      load();
-    });
-  }
-
-  function paint() {
-    $("#pf-count").textContent = `${rows.length} loaded`;
-    $("#pf-more").style.display = nextBefore ? "" : "none";
-    tbody.replaceChildren(...rows.map((r, i) => {
-      const applied = r.new_status
-        ? `<span class="pill ok">${esc(r.old_status || "?")} → ${esc(r.new_status)}</span>
-           <div class="muted" style="font-size:11px">${r.bitable_record_id ? "bitable ✓" : "bitable —"} · ${r.summary_doc_id ? "doc ✓" : "doc —"}</div>`
-        : r.poll_status === "approved" ? '<span class="muted">—</span>' : "";
-      const tr = h(`<tr class="${i === cursor ? "cursor" : ""}" style="cursor:pointer">
-        <td class="muted nowrap" title="${esc(fmtTs(r.internal_date_ms / 1000))}">${fmtAgo(r.internal_date_ms / 1000)}</td>
-        <td style="max-width:300px">
-          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(r.subject
-            || (r.candidate_name ? `${r.candidate_name}${r.firm ? " · " + r.firm : ""}` : "")
-            || (r.body_head || "").replace(/\s+/g, " ").trim().slice(0, 90)
-            || "(empty email)")}</b></div>
-          <div class="muted" style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.from_name || r.from_email || (r.subject ? "?" : "headers unavailable — needs mail headers scope"))}</div>
-        </td>
-        <td>${verdictPill(r.extraction_verdict)}</td>
-        <td class="nowrap">${esc(r.candidate_name || "")}</td>
-        <td class="nowrap" style="max-width:150px;overflow:hidden;text-overflow:ellipsis">${esc(r.firm || "")}</td>
-        <td>${pollPill(r.poll_status)}${r.resolved_by_name ? `<div class="muted" style="font-size:11px">${esc(r.resolved_by_name)} · ${fmtAgo(anyTs(r.resolved_at))}</div>` : ""}</td>
-        <td>${applied}</td>
-      </tr>`);
-      tr.onclick = () => { cursor = i; paint(); openEmail(r); };
-      return tr;
-    }));
-    if (!rows.length)
-      tbody.replaceChildren(h(`<tr><td colspan="7"><div class="empty-state"><div class="big">◦</div>No emails match these filters.</div></td></tr>`));
-  }
-
-  async function openEmail(r) {
-    try {
-      const d = await api(`/admin/api/pipeline/email?id=${encodeURIComponent(r.message_id)}`);
-      const e = d.email;
-      const body = h('<div></div>');
-      body.appendChild(frag(`<h3>Email</h3>
-        <table class="kv">
-          <tr><th>From</th><td>${esc(e.from_name || "")} &lt;${esc(e.from_email || "?")}&gt;</td></tr>
-          <tr><th>Subject</th><td>${esc(e.subject || "(no subject)")}</td></tr>
-          <tr><th>Date</th><td>${esc(fmtTs(e.internal_date_ms / 1000))}</td></tr>
-          <tr><th>Verdict</th><td>${verdictPill(e.extraction_verdict)}</td></tr>
-        </table>`));
-      /* open-poll decisions live at the TOP — decide as soon as you've
-         read enough, no scroll to the bottom required */
-      const pollActionBar = (pl) => {
-        const bar = h(`<div class="row" style="margin:0 0 8px;padding:9px 12px;background:var(--warn-bg);border:1px solid var(--line);border-radius:8px">
-          <span style="font-size:12.5px"><b>#${pl.id}</b> ${esc(pl.candidate_name || "?")}${pl.proposed_status ? ` → <b>${esc(pl.proposed_status)}</b>` : ""}${pl.firm ? ` at ${esc(pl.firm)}` : ""}</span>
-          <span style="margin-left:auto"></span>
-          <button class="btn sm ok">✓ Approve</button>
-          <button class="btn sm danger">✗ Reject</button>
-        </div>`);
-        const [bApprove, bReject] = bar.querySelectorAll("button");
-        const act = (action) => {
-          closeDrawer();
-          queueAction({
-            label: `${action === "approve" ? "Approving" : "Rejecting"} poll #${pl.id}`,
-            url: `/admin/api/pipeline/poll/${pl.id}/${action}`,
-            body: {},
-            onCommit: (res) => {
-              const ar = res.apply_result;
-              if (ar && ar.ok === false) notify(`Poll #${pl.id}: applied with issues`, "bad", 6000);
-              loadPolls(); load(); refreshCounts();
-            },
-          });
-        };
-        bApprove.onclick = () => act("approve");
-        bReject.onclick = () => act("reject");
-        return bar;
-      };
-      for (const pl of d.polls) {
-        if (pl.status === "open") body.appendChild(pollActionBar(pl));
-      }
-      if (e.body_plain) body.appendChild(frag(`<h3>Body</h3><pre class="blob">${esc(e.body_plain)}</pre>`));
-      if (e.extraction_json) body.appendChild(frag(`<h3>LLM extraction</h3><pre class="blob">${esc(JSON.stringify(e.extraction_json, null, 2))}</pre>`));
-      for (const pl of d.polls) {
-        body.appendChild(frag(`<h3>Poll #${pl.id} — ${esc(pl.poll_type)}</h3>
-          <table class="kv">
-            <tr><th>Status</th><td>${pollPill(pl.status)}</td></tr>
-            <tr><th>Candidate</th><td>${esc(pl.candidate_name || "—")}</td></tr>
-            <tr><th>Firm</th><td>${esc(pl.firm || "—")}</td></tr>
-            ${pl.proposed_status ? `<tr><th>Proposed</th><td>${esc(pl.proposed_status)}</td></tr>` : ""}
-            ${pl.resolved_by_name ? `<tr><th>Resolved by</th><td>${esc(pl.resolved_by_name)} · ${esc(fmtTs(anyTs(pl.resolved_at)))}</td></tr>` : ""}
-          </table>`));
-        if (pl.summary_md) body.appendChild(h(`<pre class="blob">${esc(pl.summary_md)}</pre>`));
-        if (pl.apply_result) body.appendChild(frag(`<h3>Apply result</h3><pre class="blob">${esc(JSON.stringify(pl.apply_result, null, 2))}</pre>`));
-      }
-      for (const c of d.changes) {
-        body.appendChild(frag(`<h3>Status change #${c.id}</h3>
-          <table class="kv">
-            <tr><th>Change</th><td><b>${esc(c.candidate_name)}</b> · ${esc(c.old_status || "?")} → <b>${esc(c.new_status)}</b> at ${esc(c.firm || "?")}</td></tr>
-            <tr><th>Applied by</th><td>${esc(c.applied_by_name || "?")} · ${esc(fmtTs(anyTs(c.applied_at)))}</td></tr>
-            <tr><th>Bitable</th><td>${c.bitable_record_id ? esc(c.bitable_record_id) : "not written"}</td></tr>
-            <tr><th>Summary doc</th><td>${c.summary_doc_id ? esc(c.summary_doc_id) : "not written"}</td></tr>
-          </table>`));
-        if (c.notes) body.appendChild(h(`<pre class="blob">${esc(JSON.stringify(c.notes, null, 2))}</pre>`));
-      }
-      openDrawer(e.subject || "(no subject)", body);
-    } catch (e2) { notify(e2.message, "bad", 5000); }
-  }
-
-  let deb;
-  const debounced = () => { clearTimeout(deb); deb = setTimeout(() => load(), 350); };
-  $("#pf-cand").oninput = debounced;
-  $("#pf-firm").oninput = debounced;
-  $("#pf-resolver").onchange = () => load();
-  $("#pf-haspoll").onchange = () => load();
-  $("#pf-more").onclick = () => load(true);
-
-  state.viewKeys = (e) => {
-    if (drawerEl && (e.key === "Escape")) { closeDrawer(); return true; }
-    if (!rows.length) return false;
-    if (e.key === "j") { cursor = Math.min(cursor + 1, rows.length - 1); paint(); $("tr.cursor", tbody)?.scrollIntoView({ block: "nearest" }); return true; }
-    if (e.key === "k") { cursor = Math.max(cursor - 1, 0); paint(); $("tr.cursor", tbody)?.scrollIntoView({ block: "nearest" }); return true; }
-    if (e.key === "Enter") { openEmail(rows[cursor]); return true; }
-    if (e.key === "/") { $("#pf-cand").focus(); return true; }
-    return false;
-  };
-
-  load();
-}
-
-/* ══ CANDIDATES WORKSPACE (Phase 5, read-only) ═══════════════════════ */
-
-const artChip = (t, url) => {
-  const label = { target_list: "TL", workup: "WU", firm_fit: "FF" }[t] || t;
-  const title = { target_list: "Target list", workup: "Workup", firm_fit: "Firm fit" }[t] || t;
-  return url
-    ? `<a class="pill acc" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(title)}" style="text-decoration:none">${esc(label)}</a>`
-    : `<span class="pill dim" title="${esc(title)}">${esc(label)}</span>`;
-};
-
-const CRM_ORDER = ["Prospect", "Agreed to submit", "Submitted",
-  "Interviewing", "Offer", "Hired", "Candidate Rejected the offer",
-  "Candidate Accepted Another Offer", "Rejected by  Firm", "(no status)"];
-
-function renderCandidates(el) {
-  el.appendChild(h(`<div class="page-head">
-    <h1>Candidates</h1>
-    <span class="sub" id="cd-total">directory from the candidate folder tree</span>
-  </div>`));
-
-  /* ── live Bitable CRM board (source of truth for Status) ── */
-  const crm = h(`<div class="panel"><div class="panel-head">
-    <h2>Pipeline status · Bitable</h2>
-    <label class="row" style="gap:6px;font-size:12px;color:var(--ink-2);cursor:pointer;margin-left:14px">
-      <input type="checkbox" id="crm-stale"> Show stale</label>
-    <span class="muted" id="crm-note" style="font-size:11.5px;margin-left:auto"></span></div>
-    <div class="panel-body" id="crm-body"><span class="spin"></span></div></div>`);
-  el.appendChild(crm);
-  let crmRows = [], crmSel = null, showStale = false;
-  $("#crm-stale", crm).onchange = (e) => { showStale = e.target.checked; paintCrm(); };
-
-  async function loadCrm() {
-    let d;
-    try { d = await api("/admin/api/candidates/bitable"); }
-    catch (e) { $("#crm-body", crm).innerHTML = `<span class="muted">${esc(e.message)}</span>`; return; }
-    crmRows = d.rows;
-    paintCrm();
-    const nStale = d.rows.filter(r => r.statuses.includes("Stale")).length;
-    $("#crm-note", crm).textContent = `${d.total} candidates (${nStale} stale) · refreshed ${fmtAgo(d.fetched_at)}`;
-  }
-
-  function paintCrm() {
-    const active = showStale ? crmRows
-      : crmRows.filter(r => !r.statuses.includes("Stale"));
-    /* Submitted only counts activity in the last 6 months — real
-       submission-doc date when we have one, Bitable last-modified as
-       the fallback. Older ones get their own muted bucket. */
-    const cutoff = Date.now() / 1000 - 183 * 86400;
-    const bucketOf = (r) => {
-      if (r.primary !== "Submitted") return r.primary;
-      const ts = r.last_submission_ts || (r.modified_ms || 0) / 1000;
-      return ts >= cutoff ? "Submitted" : "Submitted · >6mo";
-    };
-    const counts = {};
-    for (const r of active) {
-      const b = bucketOf(r);
-      counts[b] = (counts[b] || 0) + 1;
-    }
-    const keys = [...CRM_ORDER.filter(k => counts[k]),
-                  ...Object.keys(counts).filter(k => !CRM_ORDER.includes(k)).sort()];
-    const body = $("#crm-body", crm);
-    body.replaceChildren(h(`<div class="chips">
-      ${keys.map(k => `<button class="chipstat ${crmSel === k ? "active" : ""}" data-st="${esc(k)}">
-        <span>${esc(k)}</span><b>${counts[k]}</b></button>`).join("")}
-    </div>`), h('<div id="crm-list"></div>'));
-    body.querySelectorAll("[data-st]").forEach(b => b.onclick = () => {
-      crmSel = crmSel === b.dataset.st ? null : b.dataset.st;
-      paintCrm();
-    });
-    if (crmSel) {
-      const members = active.filter(r => bucketOf(r) === crmSel);
-      $("#crm-list", body).replaceChildren(h(`<div style="margin-top:10px">
-        ${members.slice(0, 120).map(m => `<a href="#" data-cand="${esc(m.name.toLowerCase())}"
-            class="pill dim" style="text-decoration:none;margin:0 4px 6px 0;display:inline-block">
-            ${esc(m.name)}${m.statuses.length > 1 ? ` <span style="opacity:.6">· ${esc(m.statuses.slice(1).join(", "))}</span>` : ""}</a>`).join("")}
-        ${members.length > 120 ? `<div class="muted" style="font-size:11.5px;margin-top:4px">+ ${members.length - 120} more — use search below</div>` : ""}
-      </div>`));
-      $("#crm-list", body).querySelectorAll("[data-cand]").forEach(a => a.onclick = (e) => {
-        e.preventDefault(); openCandidate(a.dataset.cand);
-      });
-    }
-  }
-  loadCrm();
-  const fbar = h(`<div class="row" style="margin:0 0 12px">
-    <input class="input" id="cd-q" placeholder="Search name or practice…  ( / )" style="max-width:340px">
-    <span class="muted" id="cd-count" style="margin-left:auto"></span>
-  </div>`);
-  const panel = h(`<div class="panel"><div class="panel-body flush">
-    <table class="grid"><thead><tr>
-      <th>Candidate</th><th>Practice</th><th>Bitable status</th><th>Docs</th>
-      <th class="right">Submissions</th><th class="right">Pipeline</th><th>Last activity</th>
-    </tr></thead><tbody></tbody></table>
-  </div></div>`);
-  el.append(fbar, panel);
-  const tbody = $("tbody", panel);
-  let rows = [], cursor = 0;
-
-  async function load() {
-    const q = $("#cd-q").value.trim();
-    try {
-      const d = await api(`/admin/api/candidates?q=${encodeURIComponent(q)}&limit=100`);
-      rows = d.rows; cursor = 0;
-      $("#cd-total").textContent = `${d.total} candidates with folders`;
-      paint();
-    } catch (e) { notify(e.message, "bad", 5000); }
-  }
-
-  function paint() {
-    $("#cd-count").textContent = `${rows.length} shown`;
-    tbody.replaceChildren(...rows.map((r, i) => {
-      const tr = h(`<tr class="${i === cursor ? "cursor" : ""}" style="cursor:pointer">
-        <td><b>${esc(r.name)}</b></td>
-        <td><span class="pill dim">${esc(r.practice || "—")}</span></td>
-        <td>${r.status ? `<span class="pill acc">${esc(r.status)}</span>` : '<span class="muted">—</span>'}</td>
-        <td>${(r.artifacts || []).map(t => artChip(t)).join(" ") || '<span class="muted">—</span>'}</td>
-        <td class="right">${r.submissions || "—"}</td>
-        <td class="right">${r.pipeline_events || "—"}</td>
-        <td class="muted nowrap">${r.last_activity ? fmtAgo(anyTs(r.last_activity)) : "—"}</td>
-      </tr>`);
-      tr.onclick = () => { cursor = i; paint(); openCandidate(r.key); };
-      return tr;
-    }));
-    if (!rows.length)
-      tbody.replaceChildren(h(`<tr><td colspan="7"><div class="empty-state"><div class="big">◦</div>No candidates match.</div></td></tr>`));
-  }
-
-  let deb;
-  $("#cd-q").oninput = () => { clearTimeout(deb); deb = setTimeout(load, 300); };
-
-  state.viewKeys = (e) => {
-    if (drawerEl && e.key === "Escape") { closeDrawer(); return true; }
-    if (!rows.length) return false;
-    if (e.key === "j") { cursor = Math.min(cursor + 1, rows.length - 1); paint(); $("tr.cursor", tbody)?.scrollIntoView({ block: "nearest" }); return true; }
-    if (e.key === "k") { cursor = Math.max(cursor - 1, 0); paint(); $("tr.cursor", tbody)?.scrollIntoView({ block: "nearest" }); return true; }
-    if (e.key === "Enter") { openCandidate(rows[cursor].key); return true; }
-    if (e.key === "/") { $("#cd-q").focus(); return true; }
-    return false;
-  };
-
-  load();
-  /* deep-link: #/candidates/<key> opens the drawer directly (palette) */
-  const sub = location.hash.split("/").slice(2).join("/");
-  if (sub) openCandidate(decodeURIComponent(sub));
-}
-
-async function openCandidate(key) {
-  try {
-    const d = await api(`/admin/api/candidates/detail?key=${encodeURIComponent(key)}`);
-    const body = h("<div></div>");
-    body.appendChild(frag(`<h3>Profile</h3><table class="kv">
-      <tr><th>Practice</th><td>${esc(d.practice || "—")}</td></tr>
-      <tr><th>Folder</th><td>${d.folder_url ? `<a href="${esc(d.folder_url)}" target="_blank" rel="noopener">${esc(d.folder_name || "open in Lark")}</a>` : esc(d.folder_name || "—")}</td></tr>
-      ${Object.entries(d.subfolders || {}).map(([n, u]) => `<tr><th>· ${esc(n)}</th><td><a href="${esc(u)}" target="_blank" rel="noopener">open</a></td></tr>`).join("")}
-      <tr><th>Bitable status</th><td>${d.bitable ? `<span class="pill acc">${esc(d.bitable.status || "?")}</span>` : '<span class="muted">not in Bitable yet</span>'}</td></tr>
-    </table>`));
-    if (d.artifacts?.length) {
-      body.appendChild(frag(`<h3>Deliverables</h3><table class="kv">${d.artifacts.map(a => `
-        <tr><th>${esc({ target_list: "Target list", workup: "Workup", firm_fit: "Firm fit" }[a.artifact_type] || a.artifact_type)}</th>
-        <td><a href="${esc(a.doc_url)}" target="_blank" rel="noopener">${esc(a.doc_title || "open doc")}</a>
-        <span class="muted"> · v${a.version}${anyTs(a.last_updated_at) ? ` · updated ${fmtAgo(anyTs(a.last_updated_at))}${a.last_updated_by_name ? ` by ${esc(a.last_updated_by_name)}` : ""}` : " · adopted from Drive"}</span></td></tr>`).join("")}
-      </table>`));
-    }
-    if (d.submissions?.length) {
-      body.appendChild(frag(`<h3>Submissions · ${d.submissions.length}</h3>
-        <table class="kv">${d.submissions.map(s => `
-          <tr><th class="nowrap">${esc(s.target_firm || "?")}</th>
-          <td>${s.doc_url ? `<a href="${esc(s.doc_url)}" target="_blank" rel="noopener">doc</a> · ` : ""}${esc(s.target_office || "")} ${esc(s.seniority_bucket || "")}
-          <span class="muted"> · ${s.doc_modify_time ? fmtAgo(anyTs(s.doc_modify_time)) : ""}</span>
-          ${s.summary ? `<div class="muted" style="font-size:12px">${esc(s.summary)}</div>` : ""}</td></tr>`).join("")}
-        </table>`));
-    }
-    if (d.pipeline?.length) {
-      body.appendChild(frag(`<h3>Pipeline events</h3><table class="kv">${d.pipeline.map(pl => `
-        <tr><th class="nowrap">${fmtAgo(anyTs(pl.created_at))}</th>
-        <td>${pollPill(pl.status)} ${esc(pl.poll_type)} ${pl.proposed_status ? `→ <b>${esc(pl.proposed_status)}</b>` : ""} ${pl.firm ? `at ${esc(pl.firm)}` : ""}
-        ${pl.resolved_by_name ? `<span class="muted"> · ${esc(pl.resolved_by_name)}</span>` : ""}</td></tr>`).join("")}
-      </table>`));
-    }
-    if (d.emails?.length) {
-      body.appendChild(frag(`<h3>Recent email mentions</h3><table class="kv">${d.emails.map(m => `
-        <tr><th class="nowrap">${fmtAgo(m.internal_date_ms / 1000)}</th>
-        <td>${verdictPill(m.extraction_verdict)} ${esc(m.subject || "(no subject)")}
-        <div class="muted" style="font-size:11.5px">${esc(m.from_name || m.from_email || "")}</div></td></tr>`).join("")}
-      </table>`));
-    }
-    openDrawer(d.name, body);
-  } catch (e) { notify(e.message, "bad", 5000); }
 }
 
 /* ══ HEALTH WORKSPACE (Phase 6) ══════════════════════════════════════ */
@@ -1901,7 +1405,7 @@ function renderHealth(el) {
     const ov = h(`<div class="help-overlay"><div class="help-card">
       <h2 style="color:var(--bad)">Restart the bot</h2>
       <p class="dim">This kills the live process — all in-flight webhook work and
-      any streaming card mid-render are dropped. Recruiters mid-conversation
+      any streaming card mid-render are dropped. Users mid-conversation
       will see their request die. Type <b>RESTART</b> to confirm.</p>
       <div class="row" style="margin-top:12px">
         <input class="input mono" id="rs-confirm" placeholder="RESTART">
@@ -1931,31 +1435,7 @@ function renderHealth(el) {
   window.addEventListener("hashchange", stop);
 }
 
-/* ══ RECRUITERS WORKSPACE (Phase 7) ══════════════════════════════════ */
-
-const fmtTok = (n) => !n ? "0" : n < 1e3 ? String(n) : n < 1e6 ? `${(n / 1e3).toFixed(1)}k` : `${(n / 1e6).toFixed(1)}M`;
-const fmtUsd = (v) => !v ? "$0.00" : v < 1 ? `$${v.toFixed(3)}` : v < 100 ? `$${v.toFixed(2)}` : `$${Math.round(v).toLocaleString()}`;
-const fmtMs = (ms) => ms == null ? "—" : ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
-const tokTotal = (u) => (u.input_tokens | 0) + (u.output_tokens | 0) + (u.cache_read | 0) + (u.cache_creation | 0);
-
-/* 2px line + 10% wash + ringed endpoint dot; endpoint value labeled only. */
-function sparkSvg(vals, w = 96, h = 26, labelEnd = false) {
-  if (!vals || !vals.length || !vals.some(v => v)) return '<span class="muted">—</span>';
-  const mx = Math.max(...vals), pad = 4;
-  const lw = labelEnd ? 30 : 6;
-  const step = (w - pad - lw) / Math.max(1, vals.length - 1);
-  const pts = vals.map((v, i) =>
-    [pad + i * step, h - pad - (v / mx) * (h - pad * 2)]);
-  const line = "M " + pts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" L ");
-  const [ex, ey] = pts[pts.length - 1];
-  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="trend">
-    <path class="spark-fill" d="${line} L ${ex.toFixed(1)},${h - pad} L ${pad},${h - pad} Z"/>
-    <path class="spark-line" d="${line}"/>
-    <circle class="spark-dot" cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="4"/>
-    ${labelEnd ? `<text class="spark-label" x="${ex + 7}" y="${Math.min(h - 3, ey + 4)}">${vals[vals.length - 1]}</text>` : ""}
-  </svg>`;
-}
-
+/* ── bar-chart rows helper (Use cases) ── */
 function barRows(rows) {
   const mx = Math.max(...rows.map(r => r.v), 1);
   return rows.map(r => `<div class="barrow">
@@ -1963,144 +1443,6 @@ function barRows(rows) {
     <div class="track"><div class="fill" style="width:${Math.max(2, (r.v / mx) * 100)}%"></div></div>
     <div class="num">${esc(r.num)}</div>
   </div>`).join("");
-}
-
-function renderRecruiters(el) {
-  el.appendChild(h(`<div class="page-head">
-    <h1>Recruiters</h1><span class="sub">who uses Noto, how, and what it costs</span>
-  </div>`));
-  const root = h('<div><div class="empty-state"><span class="spin"></span></div></div>');
-  el.appendChild(root);
-  let users = [], cursor = 0;
-
-  async function load() {
-    let d;
-    try { d = await api("/admin/api/recruiters?days=7"); }
-    catch (e) { notify(e.message, "bad", 5000); return; }
-    users = d.users; paint(d);
-  }
-
-  function paint(d) {
-    const k = d.kpis || {};
-    const dailyVals = (d.daily || []).map(x => x[1]);
-    root.replaceChildren(h(`<div class="fade-in">
-      <div class="tiles">
-        <div class="tile"><div class="lbl">Messages · 7d</div>
-          <div class="val">${(k.messages ?? 0).toLocaleString()}</div>
-          <div class="sub">${k.active_users ?? 0} active recruiters</div></div>
-        <div class="tile"><div class="lbl">Top workflow</div>
-          <div class="val" style="font-size:17px">${esc((d.workflows?.[0]?.label) || k.top_workflow || "—")}</div>
-          <div class="sub">${k.top_workflow_n ?? 0} invocations</div></div>
-        <div class="tile"><div class="lbl">Tokens · 7d</div>
-          <div class="val">${fmtTok(k.tokens_total | 0)}</div>
-          <div class="sub">${fmtUsd(k.cost_usd)} on Claude</div></div>
-        <div class="tile"><div class="lbl">Avg response</div>
-          <div class="val">${fmtMs(d.avg_latency_ms)}</div>
-          <div class="sub">across workflows · 7d</div></div>
-      </div>
-
-      <div class="panel"><div class="panel-head"><h2>Messages · last 14 days</h2></div>
-        <div class="panel-body">${sparkSvg(dailyVals, 720, 64, true)}</div></div>
-
-      <div class="panel"><div class="panel-head"><h2>Recruiters · full team from chat corpus</h2></div>
-        <div class="panel-body flush"><table class="grid"><thead><tr>
-          <th class="primary">Recruiter</th><th>Bot trend · 14d</th><th class="right">Bot · 7d</th>
-          <th class="right">Chat · 7d</th><th class="right">Chat · 30d</th><th class="right">Tokens</th>
-          <th class="right">Cost</th><th class="right">Latency</th><th>Last seen</th>
-        </tr></thead><tbody id="rc-body"></tbody></table></div></div>
-
-      <div class="panel"><div class="panel-head"><h2>Workflows · 7d</h2></div>
-        <div class="panel-body" id="rc-wf"></div></div>
-    </div>`));
-
-    const tbody = $("#rc-body", root);
-    tbody.replaceChildren(...users.map((u, i) => {
-      const lastAny = Math.max(u.last_seen || 0, (u.chat_last_ms || 0) / 1000);
-      const tr = h(`<tr class="${i === cursor ? "cursor" : ""}" style="cursor:pointer">
-        <td class="primary"><b>${esc(u.display_name || "Unknown")}</b><div class="oid mono muted" style="font-size:10.5px">${esc(u.open_id)}</div></td>
-        <td>${sparkSvg(u.spark || [], 96, 24)}</td>
-        <td class="right"><b>${u.msgs_window ?? 0}</b></td>
-        <td class="right">${u.chat_msgs_7d ?? "—"}</td>
-        <td class="right">${u.chat_msgs_30d ?? "—"}</td>
-        <td class="right">${fmtTok(tokTotal(u))}</td>
-        <td class="right">${fmtUsd(u.cost_usd)}</td>
-        <td class="right">${fmtMs(u.latency?.avg_ms)}</td>
-        <td class="muted nowrap">${lastAny ? fmtAgo(lastAny) : "—"}</td>
-      </tr>`);
-      tr.onclick = () => { cursor = i; openRecruiter(u.open_id); };
-      return tr;
-    }));
-    if (!users.length)
-      tbody.replaceChildren(h('<tr><td colspan="8"><div class="empty-state">No recruiter activity recorded yet.</div></td></tr>'));
-
-    $("#rc-wf", root).innerHTML = (d.workflows || []).length
-      ? barRows(d.workflows.map(w => ({
-          label: w.label || w.workflow, v: w.messages || 0,
-          num: `${w.messages} · ${fmtTok(w.tokens | 0)} · ${fmtUsd(w.cost_usd)}` })))
-      : '<span class="muted">no workflow invocations in window</span>';
-  }
-
-  async function openRecruiter(oid) {
-    try {
-      const d = await api(`/admin/api/recruiters/detail?oid=${encodeURIComponent(oid)}`);
-      const u = d.user || {};
-      const body = h("<div></div>");
-      body.appendChild(frag(`<h3>Activity · ${d.days}d</h3>
-        <div style="margin:0 0 10px">${sparkSvg((d.daily || []).map(x => x[1]), 540, 56, true)}</div>
-        <table class="kv">
-          <tr><th>Messages</th><td>${u.msg_count ?? "?"} total · first seen ${u.first_seen ? fmtAgo(u.first_seen) : "?"}</td></tr>
-          <tr><th>Avg response</th><td>${fmtMs(d.latency?.avg_ms)} over ${d.latency?.n ?? 0} runs</td></tr>
-        </table>`));
-      if (d.actions?.length) {
-        body.appendChild(frag(`<h3>Use cases · 30d</h3><div>${barRows(d.actions.map(a => ({
-          label: a.action_type.replace(/_/g, " "), v: a.n,
-          num: String(a.n) })))}</div>`));
-      } else {
-        body.appendChild(frag(`<h3>Use cases · 30d</h3>
-          <p class="muted" style="font-size:12px">no classified requests yet — accrues after the next bot restart</p>`));
-      }
-      if (d.workflows?.length) {
-        body.appendChild(frag(`<h3>Workflows</h3><div>${barRows(d.workflows.map(w => ({
-          label: w.label || w.workflow, v: w.messages || 0,
-          num: `${w.messages} · ${fmtUsd(w.cost_usd)}` })))}</div>`));
-      }
-      if (d.memory) {
-        if (d.memory.error) {
-          body.appendChild(frag(`<h3>Memory</h3><p class="muted">${esc(d.memory.error)}</p>`));
-        } else {
-          body.appendChild(frag(`<h3>Recruiter memory · super_admin only</h3>
-            <p class="muted" style="font-size:11.5px;margin:0 0 8px">DM-derived personal context — never shown to members or in any group surface.</p>`));
-          for (const f of (d.memory.facts || [])) {
-            const md = f.metadata || {};
-            body.appendChild(h(`<div class="panel" style="margin:0 0 8px"><div class="panel-body">
-              <div class="row"><b class="mono" style="font-size:12px">${esc(f.slug)}</b>
-                <span class="pill dim">${esc(md.type || "")}</span>
-                <span class="muted" style="font-size:11px;margin-left:auto">×${md.reinforcement_count ?? 1} · ${fmtAgo(anyTs(md.updated_at))}</span></div>
-              <div class="dim" style="font-size:12.5px;margin-top:4px">${esc(f.description || "")}</div>
-            </div></div>`));
-          }
-          if (!(d.memory.facts || []).length)
-            body.appendChild(h('<p class="muted">no facts learned yet</p>'));
-        }
-      }
-      openDrawer(u.display_name || oid, body);
-    } catch (e) { notify(e.message, "bad", 5000); }
-  }
-
-  state.viewKeys = (e) => {
-    if (drawerEl && e.key === "Escape") { closeDrawer(); return true; }
-    if (!users.length) return false;
-    if (e.key === "j") { cursor = Math.min(cursor + 1, users.length - 1); paintCursor(); return true; }
-    if (e.key === "k") { cursor = Math.max(cursor - 1, 0); paintCursor(); return true; }
-    if (e.key === "Enter") { openRecruiter(users[cursor].open_id); return true; }
-    return false;
-  };
-  function paintCursor() {
-    [...(root.querySelector("#rc-body")?.children || [])].forEach((tr, i) =>
-      tr.classList.toggle("cursor", i === cursor));
-  }
-
-  load();
 }
 
 /* ══ USE CASES WORKSPACE ═════════════════════════════════════════════ */
@@ -2115,7 +1457,7 @@ function renderUseCases(el) {
 
   (async () => {
     let d;
-    try { d = await api("/admin/api/recruiters?days=7"); }
+    try { d = await api("/admin/api/usage?days=7"); }
     catch (e) { notify(e.message, "bad", 5000); return; }
     if (!(d.actions || []).length) {
       root.replaceChildren(h(`<div class="panel"><div class="empty-state">
@@ -2123,10 +1465,10 @@ function renderUseCases(el) {
         <div><b>No use-case data yet.</b></div>
         <div style="margin-top:6px;max-width:520px;margin-left:auto;margin-right:auto">
           Every message gets classified by the skill Noto used for it —
-          submission draft/edit, target list, workup, firm fit, research
-          question, doc edits, commands — starting from the next bot
-          restart. Within a week or two this page shows the team's most
-          common use cases and who's using (or missing) each one.</div>
+          research questions, doc edits, commands and more — starting
+          from the next bot restart. Within a week or two this page shows
+          the team's most common use cases and who's using (or missing)
+          each one.</div>
       </div></div>`));
       return;
     }
@@ -2144,11 +1486,11 @@ function renderUseCases(el) {
       <div class="panel"><div class="panel-head"><h2>Distribution · 30d</h2></div>
         <div class="panel-body">${barRows(d.actions.map(a => ({
           label: a.action_type.replace(/_/g, " "), v: a.messages,
-          num: `${a.messages} · ${a.users} recruiter(s)` })))}</div></div>
-      <div class="panel"><div class="panel-head"><h2>Coverage by recruiter · 30d</h2>
+          num: `${a.messages} · ${a.users} user(s)` })))}</div></div>
+      <div class="panel"><div class="panel-head"><h2>Coverage by user · 30d</h2>
         <span class="muted" style="font-size:11.5px;margin-left:auto">— means never used it: your "did you know Noto can…" list</span></div>
         <div class="panel-body flush" style="overflow-x:auto"><table class="grid"><thead><tr>
-          <th class="primary">Recruiter</th>${topActs.map(t => `<th class="right">${esc(t.replace(/_/g, " "))}</th>`).join("")}
+          <th class="primary">User</th>${topActs.map(t => `<th class="right">${esc(t.replace(/_/g, " "))}</th>`).join("")}
         </tr></thead><tbody>
         ${matrix.map(([oid, acts]) => `<tr>
           <td class="primary"><b>${esc(nameOf[oid] || "·" + oid.slice(-6))}</b></td>

@@ -14,7 +14,6 @@ Hard rules (see CLAUDE.md):
     module is LarkClient.send_text (magic-link DMs).
   - Every mutation delegates to an existing store function so its
     invariants (CAS, audit columns, authority gates) are preserved.
-  - Recruiter-memory content is super_admin-gated server-side.
 """
 
 import hashlib
@@ -523,9 +522,6 @@ def _inbox_counts(p: Principal) -> Response:
         "nuggets": _count("chat_nuggets.db",
                           "SELECT COUNT(*) FROM chat_nuggets "
                           "WHERE status='pending'"),
-        "open_polls": _count("pipeline.db",
-                             "SELECT COUNT(*) FROM pipeline_polls "
-                             "WHERE status='open'"),
         "nuggets_unembedded": _count(
             "chat_nuggets.db",
             "SELECT COUNT(*) FROM chat_nuggets "
@@ -693,7 +689,7 @@ def _rule_evidence(p: Principal, rule_id: int) -> Response:
             q = ",".join("?" * len(ids))
             events = [dict(e) for e in conn.execute(
                 f"SELECT id, workflow, source, doc_url, candidate, "
-                f"recruiter_name, authority, instruction, "
+                f"recruiter_name AS user_name, authority, instruction, "
                 f"before_md, after_md, "
                 f"change_type, confidence, captured_at "
                 f"FROM feedback_events WHERE id IN ({q})", ids)]
@@ -916,497 +912,6 @@ def _nugget_dismiss(p: Principal, nid: int, body: bytes) -> Response:
     _audit(p.open_id, p.name, "nuggets.dismiss", str(nid),
            {k: v for k, v in data.items() if k != "_csrf"}, res)
     return _json_resp(200 if res.get("ok") else 409, res)
-
-
-# ---------------------------------------------------------------------------
-# Pipeline history — Phase 4 (read-only)
-# ---------------------------------------------------------------------------
-
-def _pipeline_db() -> str:
-    return os.path.join(get_home(), "indexes", "pipeline.db")
-
-
-def _pipeline_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_pipeline_db())
-    conn.row_factory = sqlite3.Row
-    harden(conn)
-    return conn
-
-
-def _pipeline_list(p: Principal, query: Dict[str, str]) -> Response:
-    if not os.path.exists(_pipeline_db()):
-        return _json_resp(200, {"ok": True, "rows": [], "facets": {}})
-    limit = min(int(query.get("limit", "100") or 100), 300)
-    before_ms = int(query.get("before", "0") or 0)   # pagination cursor
-    wh, args = [], []
-    if query.get("verdict"):
-        wh.append("e.extraction_verdict = ?"); args.append(query["verdict"])
-    if query.get("candidate"):
-        wh.append("p.candidate_name LIKE ?")
-        args.append(f"%{query['candidate']}%")
-    if query.get("firm"):
-        wh.append("p.firm LIKE ?"); args.append(f"%{query['firm']}%")
-    if query.get("resolved_by"):
-        wh.append("p.resolved_by_name = ?"); args.append(query["resolved_by"])
-    if query.get("has_poll") == "1":
-        wh.append("p.id IS NOT NULL")
-    if before_ms:
-        wh.append("e.internal_date_ms < ?"); args.append(before_ms)
-    conn = _pipeline_conn()
-    try:
-        # pipeline_status_changes is created lazily by pipeline_apply — a
-        # fresh install may not have it yet; join NULLs in that case.
-        has_changes = bool(conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' "
-            "AND name='pipeline_status_changes'").fetchone())
-        change_cols = (
-            "c.old_status, c.new_status, c.applied_by_name, c.applied_at, "
-            "c.bitable_record_id, c.summary_doc_id "
-            if has_changes else
-            "NULL AS old_status, NULL AS new_status, "
-            "NULL AS applied_by_name, NULL AS applied_at, "
-            "NULL AS bitable_record_id, NULL AS summary_doc_id ")
-        change_join = ("LEFT JOIN pipeline_status_changes c ON c.poll_id = p.id "
-                       if has_changes else "")
-        sql = (
-            "SELECT e.message_id, e.from_email, e.from_name, e.subject, "
-            "substr(e.body_plain, 1, 200) AS body_head, "
-            "e.internal_date_ms, e.extraction_verdict, "
-            "p.id AS poll_id, p.poll_type, p.candidate_name, p.firm, "
-            "p.proposed_status, p.status AS poll_status, "
-            "p.resolved_by_name, p.resolved_at, "
-            + change_cols +
-            "FROM emails e "
-            "LEFT JOIN pipeline_polls p ON p.source_message_id = e.message_id "
-            + change_join
-            + ("WHERE " + " AND ".join(wh) if wh else "")
-            + " ORDER BY e.internal_date_ms DESC LIMIT ?")
-        rows = [dict(r) for r in conn.execute(sql, args + [limit])]
-        verdicts = [r[0] for r in conn.execute(
-            "SELECT DISTINCT extraction_verdict FROM emails "
-            "WHERE extraction_verdict IS NOT NULL ORDER BY 1")]
-        resolvers = [r[0] for r in conn.execute(
-            "SELECT DISTINCT resolved_by_name FROM pipeline_polls "
-            "WHERE resolved_by_name != '' ORDER BY 1")]
-        counts = {r[0] or "(unextracted)": r[1] for r in conn.execute(
-            "SELECT extraction_verdict, COUNT(*) FROM emails "
-            "GROUP BY extraction_verdict")}
-    finally:
-        conn.close()
-    return _json_resp(200, {
-        "ok": True, "rows": rows,
-        "facets": {"verdict": verdicts, "resolved_by": resolvers},
-        "verdict_counts": counts,
-        "next_before": rows[-1]["internal_date_ms"] if len(rows) == limit else None,
-    })
-
-
-def _pipeline_polls_list(p: Principal, query: Dict[str, str]) -> Response:
-    import pipeline_store
-    polls = pipeline_store.list_open_polls()
-    now = time.time()
-    for pl in polls:
-        try:
-            pl["expires_in_s"] = max(0, int((pl.get("expires_at_ts") or 0)
-                                            - now)) or None
-        except Exception:
-            pl["expires_in_s"] = None
-    return _json_resp(200, {"ok": True, "polls": polls})
-
-
-def _poll_resolve(p: Principal, poll_id: int, action: str,
-                  body: bytes) -> Response:
-    """Approve/reject a pipeline poll from the panel — the exact same
-    contract as the Lark card click handler: admin gate → first-wins
-    CAS → apply (approve only) → stash apply_result → update the card
-    in Pipeline Management best-effort."""
-    from feedback_capture import is_admin
-    if p.via != "shared_key" and not is_admin(p.open_id):
-        return _err(403, "pipeline changes need admin tier "
-                         "(operators.yaml) — same gate as the Lark card")
-    import pipeline_store as ps
-    import pipeline_apply
-    import pipeline_card
-    from datetime import datetime, timezone
-    poll = ps.get_poll(poll_id)
-    if not poll:
-        return _err(404, f"no poll #{poll_id}")
-    new_status = "approved" if action == "approve" else "rejected"
-    won = ps.resolve_poll(poll_id, new_status, p.open_id, p.name)
-    if not won:
-        cur = ps.get_poll(poll_id) or {}
-        return _err(409, f"already {cur.get('status')} by "
-                         f"{cur.get('resolved_by_name') or 'someone'}")
-    apply_result = None
-    if new_status == "approved":
-        try:
-            apply_result = pipeline_apply.apply_poll(
-                poll_id, approver_oid=p.open_id, approver_name=p.name)
-        except Exception as e:
-            apply_result = {"ok": False, "error": str(e)[:200]}
-        db = ps._connect()
-        try:
-            db.execute("UPDATE pipeline_polls SET apply_result=? "
-                       "WHERE id=?", (json.dumps(apply_result), poll_id))
-            db.commit()
-        finally:
-            db.close()
-    try:
-        pipeline_card.update_to_resolved(
-            card_message_id=poll.get("card_message_id") or "",
-            poll_id=poll_id, summary_md=poll.get("summary_md", ""),
-            status=new_status, resolver_name=p.name,
-            apply_result=apply_result,
-            resolved_at=datetime.now(timezone.utc).strftime("%H:%M UTC"))
-    except Exception as e:
-        print(f"[admin_panel] poll card update failed: {e}")
-    _audit(p.open_id, p.name, f"pipeline.poll_{action}", str(poll_id),
-           {}, {"apply_result": apply_result})
-    return _json_resp(200, {"ok": True, "poll_id": poll_id,
-                            "status": new_status,
-                            "apply_result": apply_result})
-
-
-def _pipeline_email(p: Principal, query: Dict[str, str]) -> Response:
-    mid = query.get("id", "")
-    if not mid:
-        return _err(400, "missing id")
-    conn = _pipeline_conn()
-    try:
-        e = conn.execute(
-            "SELECT message_id, smtp_message_id, thread_id, "
-            "internal_date_ms, from_email, from_name, to_emails, subject, "
-            "substr(body_plain, 1, 20000) AS body_plain, fetched_at, "
-            "extracted_at, extraction_verdict, extraction_json "
-            "FROM emails WHERE message_id=?", (mid,)).fetchone()
-        if not e:
-            return _err(404, "no such email")
-        email = dict(e)
-        polls = [dict(r) for r in conn.execute(
-            "SELECT * FROM pipeline_polls WHERE source_message_id=? "
-            "ORDER BY id", (mid,))]
-        try:
-            changes = [dict(r) for r in conn.execute(
-                "SELECT * FROM pipeline_status_changes "
-                "WHERE source_message_id=? ORDER BY id", (mid,))]
-        except sqlite3.OperationalError:
-            changes = []
-    finally:
-        conn.close()
-    for k in ("extraction_json",):
-        try:
-            email[k] = json.loads(email.get(k) or "null")
-        except Exception:
-            pass
-    for pl in polls:
-        for k in ("proposed_event", "resolution_payload", "apply_result"):
-            try:
-                pl[k] = json.loads(pl.get(k) or "null")
-            except Exception:
-                pass
-    for c in changes:
-        try:
-            c["notes"] = json.loads(c.get("notes") or "null")
-        except Exception:
-            pass
-    return _json_resp(200, {"ok": True, "email": email, "polls": polls,
-                            "changes": changes})
-
-
-# ---------------------------------------------------------------------------
-# Candidate directory — Phase 5 (read-only)
-# Backbone = lark/candidate_folder_index.json (folder presence is the
-# "real engagement" signal used across the pipeline); enriched from
-# submissions.db, candidate_artifacts.db, pipeline.db and candidates.db
-# (Bitable mirror — may be empty until the Base is provisioned).
-# ---------------------------------------------------------------------------
-
-_cfi_cache: Dict[str, Any] = {"mtime": 0.0, "data": {}}
-
-
-def _folder_index() -> Dict[str, Any]:
-    path = os.path.join(get_home(), "lark", "candidate_folder_index.json")
-    try:
-        mt = os.path.getmtime(path)
-    except OSError:
-        return {}
-    if mt != _cfi_cache["mtime"]:
-        try:
-            with open(path) as f:
-                _cfi_cache["data"] = (json.load(f) or {}).get("candidates", {})
-            _cfi_cache["mtime"] = mt
-        except Exception:
-            return _cfi_cache["data"] or {}
-    return _cfi_cache["data"]
-
-
-def _tenant_url() -> str:
-    cfg = load_config()
-    return str((cfg.get("lark") or {}).get(
-        "tenant_url", "")).rstrip("/")
-
-
-def _idx_db(name: str) -> Optional[sqlite3.Connection]:
-    path = os.path.join(get_home(), "indexes", name)
-    if not os.path.exists(path):
-        return None
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    harden(conn)
-    return conn
-
-
-def _candidates_list(p: Principal, query: Dict[str, str]) -> Response:
-    q = (query.get("q") or "").strip().lower()
-    limit = min(int(query.get("limit", "60") or 60), 200)
-    cands = _folder_index()
-
-    # Aggregates, one query per store.
-    subs: Dict[str, Tuple[int, Any]] = {}
-    conn = _idx_db("submissions.db")
-    if conn:
-        try:
-            for r in conn.execute(
-                    "SELECT lower(candidate_name) k, COUNT(*) n, "
-                    "MAX(doc_modify_time) m FROM submissions GROUP BY k"):
-                subs[r["k"]] = (r["n"], r["m"])
-        finally:
-            conn.close()
-    arts: Dict[str, List[str]] = {}
-    conn = _idx_db("candidate_artifacts.db")
-    if conn:
-        try:
-            for r in conn.execute(
-                    "SELECT candidate_key, artifact_type FROM artifacts"):
-                arts.setdefault(r["candidate_key"], []).append(
-                    r["artifact_type"])
-        finally:
-            conn.close()
-    polls: Dict[str, Any] = {}
-    conn = _idx_db("pipeline.db")
-    if conn:
-        try:
-            for r in conn.execute(
-                    "SELECT COALESCE(NULLIF(candidate_key,''), "
-                    "lower(candidate_name)) k, MAX(created_at) m, COUNT(*) n "
-                    "FROM pipeline_polls GROUP BY k"):
-                polls[r["k"]] = (r["n"], r["m"])
-        finally:
-            conn.close()
-    status: Dict[str, str] = {}
-    conn = _idx_db("candidates.db")
-    if conn:
-        try:
-            for r in conn.execute("SELECT lower(name) k, status "
-                                  "FROM candidates"):
-                status[r["k"]] = r["status"]
-        except sqlite3.OperationalError:
-            pass
-        finally:
-            conn.close()
-
-    rows = []
-    for key, rec in cands.items():
-        if q and q not in key and q not in (rec.get("practice") or "").lower():
-            continue
-        n_subs, last_sub = subs.get(key, (0, None))
-        n_polls, last_poll = polls.get(key, (0, None))
-        # also try dashed key used by pipeline (seung-jin-lee)
-        if not n_polls:
-            n_polls, last_poll = polls.get(key.replace(" ", "-"), (0, None))
-        rows.append({
-            "key": key,
-            "name": rec.get("name") or key.title(),
-            "practice": rec.get("practice") or "",
-            "status": status.get(key),
-            "artifacts": sorted(set(arts.get(key, []))),
-            "submissions": n_subs,
-            "pipeline_events": n_polls,
-            "last_activity": max(filter(None, [last_sub, last_poll]),
-                                 default=None),
-            "indexed_at": rec.get("indexed_at"),
-        })
-    rows.sort(key=lambda r: (r["last_activity"] or "", r["submissions"]),
-              reverse=True)
-    return _json_resp(200, {"ok": True, "total": len(rows),
-                            "rows": rows[:limit]})
-
-
-_bitable_cache: Dict[str, Any] = {"at": 0.0, "data": None}
-
-
-def _fetch_bitable_rows() -> Dict[str, Any]:
-    """Fetch + shape the CRM table; updates the cache. Raises on API
-    failure."""
-    cfg = load_config()
-    lk = cfg.get("lark") or {}
-    app_token = lk.get("bitable_app_token", "")
-    table_id = lk.get("bitable_table_pipeline", "")
-    if not (app_token and table_id):
-        raise RuntimeError("bitable not configured")
-    from lark_client import LarkClient
-    recs = LarkClient().bitable_list_records(app_token, table_id)
-    # Real submission dates: latest submission-doc creation per candidate
-    # (submissions.db). The Bitable has no "submitted at" field — its
-    # Last Modified Date is the fallback (any edit bumps it).
-    sub_ts: Dict[str, float] = {}
-    conn = _idx_db("submissions.db")
-    if conn:
-        try:
-            for nm, ts in conn.execute(
-                    "SELECT lower(candidate_name), "
-                    "MAX(COALESCE(doc_create_time, doc_modify_time)) "
-                    "FROM submissions GROUP BY 1"):
-                try:
-                    v = float(ts)
-                    sub_ts[nm] = v / 1000 if v > 1e12 else v
-                except (TypeError, ValueError):
-                    pass
-        finally:
-            conn.close()
-    rows = []
-    counts: Dict[str, int] = {}
-    for r in recs:
-        f = r.get("fields") or {}
-        name = f.get("Name")
-        if isinstance(name, list):     # rich-text cells come as lists
-            name = "".join(x.get("text", "") if isinstance(x, dict)
-                           else str(x) for x in name)
-        name = (name or "").strip()
-        statuses = f.get("Status") or []
-        if isinstance(statuses, str):
-            statuses = [statuses]
-        primary = statuses[0] if statuses else "(no status)"
-        counts[primary] = counts.get(primary, 0) + 1
-        link = f.get("Profile Link")
-        url = (link or {}).get("link") if isinstance(link, dict) else None
-        rows.append({
-            "record_id": r.get("record_id"),
-            "name": name,
-            "statuses": statuses,
-            "primary": primary,
-            "profile_url": url,
-            "modified_ms": f.get("Last Modified Date"),
-            "last_submission_ts": sub_ts.get(name.lower()),
-        })
-    rows.sort(key=lambda x: x.get("modified_ms") or 0, reverse=True)
-    now = time.time()
-    data = {"ok": True, "total": len(rows), "counts": counts,
-            "rows": rows, "fetched_at": now}
-    _bitable_cache.update(at=now, data=data)
-    return data
-
-
-def _bitable_refresh_async() -> None:
-    """Refresh the CRM cache off the request thread."""
-    def _run():
-        try:
-            _fetch_bitable_rows()
-        except Exception as e:
-            print(f"[admin_panel] bitable refresh failed: {e}")
-    threading.Thread(target=_run, daemon=True,
-                     name="admin-panel-bitable").start()
-
-
-def _candidates_bitable(p: Principal, query: Dict[str, str]) -> Response:
-    """Live CRM view of the candidate-pipeline Bitable (the source of
-    truth for Status). ~1.5k records over a paginated API takes ~30s, so:
-    fresh cache (<120s) serves directly; stale cache serves immediately
-    and refreshes in the background; only a cold start ever waits."""
-    now = time.time()
-    if _bitable_cache["data"] and not query.get("fresh"):
-        if now - _bitable_cache["at"] >= 120:
-            _bitable_refresh_async()
-        return _json_resp(200, _bitable_cache["data"])
-    try:
-        return _json_resp(200, _fetch_bitable_rows())
-    except Exception as e:
-        return _err(502, f"bitable read failed: {str(e)[:200]}")
-
-
-def _candidate_detail(p: Principal, query: Dict[str, str]) -> Response:
-    key = (query.get("key") or "").strip().lower()
-    cands = _folder_index()
-    rec = cands.get(key)
-    if not rec:
-        return _err(404, "no such candidate in the folder index")
-    tenant = _tenant_url()
-    out: Dict[str, Any] = {
-        "ok": True,
-        "key": key,
-        "name": rec.get("name") or key.title(),
-        "practice": rec.get("practice") or "",
-        "folder_name": rec.get("folder_name") or "",
-        "folder_url": (f"{tenant}/drive/folder/{rec['folder_token']}"
-                       if rec.get("folder_token") else None),
-        "subfolders": {
-            n: f"{tenant}/drive/folder/{tok}"
-            for n, tok in (rec.get("subfolders") or {}).items()},
-    }
-
-    conn = _idx_db("candidates.db")
-    out["bitable"] = None
-    if conn:
-        try:
-            r = conn.execute("SELECT * FROM candidates WHERE lower(name)=?",
-                             (key,)).fetchone()
-            if r:
-                out["bitable"] = dict(r)
-        except sqlite3.OperationalError:
-            pass
-        finally:
-            conn.close()
-
-    out["artifacts"] = []
-    conn = _idx_db("candidate_artifacts.db")
-    if conn:
-        try:
-            out["artifacts"] = [dict(r) for r in conn.execute(
-                "SELECT artifact_type, doc_url, doc_title, version, "
-                "last_updated_at, last_updated_by_name, adopted_from_drive, "
-                "sync_state FROM artifacts WHERE candidate_key=? "
-                "ORDER BY artifact_type", (key,))]
-        finally:
-            conn.close()
-
-    out["submissions"] = []
-    conn = _idx_db("submissions.db")
-    if conn:
-        try:
-            out["submissions"] = [
-                {**dict(r),
-                 "doc_url": f"{tenant}/docx/{r['doc_token']}"
-                            if r["doc_token"] else None}
-                for r in conn.execute(
-                    "SELECT doc_token, target_firm, target_office, "
-                    "seniority_bucket, summary, doc_modify_time "
-                    "FROM submissions WHERE lower(candidate_name)=? "
-                    "ORDER BY doc_modify_time DESC LIMIT 30", (key,))]
-        finally:
-            conn.close()
-
-    out["pipeline"] = []
-    out["emails"] = []
-    conn = _idx_db("pipeline.db")
-    if conn:
-        try:
-            dashed = key.replace(" ", "-")
-            out["pipeline"] = [dict(r) for r in conn.execute(
-                "SELECT id, poll_type, firm, proposed_status, status, "
-                "resolved_by_name, resolved_at, created_at "
-                "FROM pipeline_polls WHERE candidate_key IN (?,?) "
-                "OR lower(candidate_name)=? "
-                "ORDER BY created_at DESC LIMIT 20", (key, dashed, key))]
-            name = out["name"]
-            out["emails"] = [dict(r) for r in conn.execute(
-                "SELECT message_id, subject, from_name, from_email, "
-                "internal_date_ms, extraction_verdict "
-                "FROM emails WHERE subject LIKE ? OR body_plain LIKE ? "
-                "ORDER BY internal_date_ms DESC LIMIT 10",
-                (f"%{name}%", f"%{name}%"))]
-        finally:
-            conn.close()
-    return _json_resp(200, out)
 
 
 # ---------------------------------------------------------------------------
@@ -1667,10 +1172,9 @@ def _ops_tunnel(p: Principal, body: bytes) -> Response:
 
 
 # ---------------------------------------------------------------------------
-# Recruiter usage analytics — Phase 7
+# Usage analytics — Phase 7
 # Reads via UsageStore.get() (the process-wide singleton — its rule) plus
-# read-only SQL for latency and per-user daily series. Recruiter-memory
-# content is super_admin-only, enforced here server-side.
+# read-only SQL for latency and per-user daily series.
 # ---------------------------------------------------------------------------
 
 def _usage_extra(days: int) -> Tuple[Dict[str, Any], Dict[str, List[int]]]:
@@ -1705,39 +1209,7 @@ def _usage_extra(days: int) -> Tuple[Dict[str, Any], Dict[str, List[int]]]:
     return lat, spark
 
 
-def _chat_roster(days: int) -> Dict[str, Dict[str, Any]]:
-    """The FULL team roster from the synced chat corpus — everyone who
-    talks in company chats, not just people who've addressed the bot.
-    Bot + service accounts excluded."""
-    path = os.path.join(get_home(), "indexes", "chat_messages.db")
-    roster: Dict[str, Dict[str, Any]] = {}
-    if not os.path.exists(path):
-        return roster
-    now_ms = time.time() * 1000
-    cut7 = now_ms - days * 86400_000
-    cut30 = now_ms - 30 * 86400_000
-    conn = sqlite3.connect(path)
-    harden(conn)
-    try:
-        for oid, nm, m7, m30, last in conn.execute(
-                "SELECT sender_open_id, MAX(sender_name), "
-                "SUM(created_at_ms >= ?), SUM(created_at_ms >= ?), "
-                "MAX(created_at_ms) FROM chat_messages "
-                "WHERE sender_open_id != '' "
-                "AND COALESCE(sender_authority,'') != 'bot' "
-                "GROUP BY sender_open_id", (cut7, cut30)):
-            roster[oid] = {"open_id": oid, "name": nm or "",
-                           "chat_msgs_7d": int(m7 or 0),
-                           "chat_msgs_30d": int(m30 or 0),
-                           "chat_last_ms": last}
-    except sqlite3.OperationalError:
-        pass
-    finally:
-        conn.close()
-    return roster
-
-
-def _recruiters_overview(p: Principal, query: Dict[str, str]) -> Response:
+def _usage_overview(p: Principal, query: Dict[str, str]) -> Response:
     days = min(int(query.get("days", "7") or 7), 90)
     try:
         from usage_store import UsageStore
@@ -1755,29 +1227,7 @@ def _recruiters_overview(p: Principal, query: Dict[str, str]) -> Response:
     for u in real:
         u["latency"] = lat.get(u["open_id"])
         u["spark"] = spark.get(u["open_id"], [])
-    # Merge the chat-corpus roster: the whole team, with chat activity —
-    # bot-usage stats attach where they exist. (Previously the page only
-    # showed people who had addressed the bot, which made it meaningless
-    # as a team view.)
-    roster = _chat_roster(days)
-    by_oid = {u["open_id"]: u for u in real}
-    for oid, rec in roster.items():
-        u = by_oid.get(oid)
-        if u:
-            u["chat_msgs_7d"] = rec["chat_msgs_7d"]
-            u["chat_msgs_30d"] = rec["chat_msgs_30d"]
-            u["chat_last_ms"] = rec["chat_last_ms"]
-            if rec["name"] and not (u.get("display_name") or "").strip():
-                u["display_name"] = rec["name"]
-        else:
-            real.append({"open_id": oid, "display_name": rec["name"],
-                         "msgs_window": 0, "msgs_30d": 0,
-                         "chat_msgs_7d": rec["chat_msgs_7d"],
-                         "chat_msgs_30d": rec["chat_msgs_30d"],
-                         "chat_last_ms": rec["chat_last_ms"],
-                         "spark": [], "latency": None})
-    real.sort(key=lambda u: (-(u.get("msgs_window") or 0),
-                             -(u.get("chat_msgs_7d") or 0)))
+    real.sort(key=lambda u: -(u.get("msgs_window") or 0))
     lat_all = [v["avg_ms"] for v in lat.values() if v.get("avg_ms")]
     try:
         actions = s.actions_breakdown(window_days=30)
@@ -1790,40 +1240,6 @@ def _recruiters_overview(p: Principal, query: Dict[str, str]) -> Response:
         "actions": actions, "actions_by_user": actions_by_user,
         "avg_latency_ms": (sum(lat_all) / len(lat_all)) if lat_all else None,
     })
-
-
-def _recruiter_detail(p: Principal, query: Dict[str, str]) -> Response:
-    oid = (query.get("oid") or "").strip()
-    if not re.fullmatch(r"ou_[0-9a-f]{16,64}", oid):
-        return _err(400, "bad open_id")
-    days = min(int(query.get("days", "30") or 30), 90)
-    try:
-        from usage_store import UsageStore
-        s = UsageStore.get()
-        user = s.get_user(oid)
-        wf = s.workflows_breakdown(window_days=days, user_open_id=oid)
-        daily = s.messages_by_day(days=30, user_open_id=oid)
-    except Exception as e:
-        return _err(500, f"usage store unavailable: {e}")
-    lat, _ = _usage_extra(days)
-    try:
-        actions = s.actions_for_user(oid, window_days=30)
-    except Exception:
-        actions = []
-    out: Dict[str, Any] = {"ok": True, "user": user, "workflows": wf,
-                           "daily": daily, "latency": lat.get(oid),
-                           "actions": actions, "days": days}
-    # Recruiter memory — DM-derived personal context. super_admin ONLY.
-    if p.is_super_admin:
-        try:
-            from recruiter_memory import list_facts, tail_write_log
-            out["memory"] = {
-                "facts": list_facts(oid),
-                "write_log": tail_write_log(oid, n=15),
-            }
-        except Exception as e:
-            out["memory"] = {"error": str(e)[:120]}
-    return _json_resp(200, out)
 
 
 # ---------------------------------------------------------------------------
@@ -2025,33 +1441,16 @@ def handle(method: str, path: str, query: Dict[str, str],
         return _rule_evidence(p, int(m.group(1)))
     if method == "GET" and path == "/admin/api/nuggets":
         return _nuggets_list(p, query)
-    if method == "GET" and path == "/admin/api/pipeline":
-        return _pipeline_list(p, query)
-    if method == "GET" and path == "/admin/api/pipeline/email":
-        return _pipeline_email(p, query)
-    if method == "GET" and path == "/admin/api/candidates":
-        return _candidates_list(p, query)
-    if method == "GET" and path == "/admin/api/candidates/bitable":
-        return _candidates_bitable(p, query)
-    if method == "GET" and path == "/admin/api/candidates/detail":
-        return _candidate_detail(p, query)
     if method == "GET" and path == "/admin/api/health":
         return _health(p, query)
-    if method == "GET" and path == "/admin/api/recruiters":
-        return _recruiters_overview(p, query)
-    if method == "GET" and path == "/admin/api/recruiters/detail":
-        return _recruiter_detail(p, query)
+    if method == "GET" and path == "/admin/api/usage":
+        return _usage_overview(p, query)
     if method == "POST" and path == "/admin/api/ops/resync":
         return _ops_resync(p, body)
     if method == "POST" and path == "/admin/api/ops/restart-bot":
         return _ops_restart_bot(p, body)
     if method == "POST" and path == "/admin/api/ops/tunnel":
         return _ops_tunnel(p, body)
-    if method == "GET" and path == "/admin/api/pipeline/polls":
-        return _pipeline_polls_list(p, query)
-    m = re.fullmatch(r"/admin/api/pipeline/poll/(\d+)/(approve|reject)", path)
-    if m and method == "POST":
-        return _poll_resolve(p, int(m.group(1)), m.group(2), body)
     m = re.fullmatch(r"/admin/api/nuggets/(\d+)/(approve|dismiss|contextualize)",
                      path)
     if m and method == "POST":

@@ -1,0 +1,7 @@
+# People with elevated trust. Copy to memory/operators.yaml.
+# open_id comes from the Lark admin console or the bot's logs.
+your_admin:
+  name: "Your Name"
+  open_id: "ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  role: admin
+  super_admin: true       # can use ops buttons + manage panel users

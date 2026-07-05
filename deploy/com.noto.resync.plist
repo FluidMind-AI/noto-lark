@@ -4,7 +4,7 @@
        cp deploy/com.noto.resync.plist ~/Library/LaunchAgents/
        launchctl load -w ~/Library/LaunchAgents/com.noto.resync.plist
      Runs daily at 03:30. Logs: lark/resync.log
-     Edit paths below if the repo is not at /Users/noto/noto-home. -->
+     Edit paths below if the repo is not at /PATH/TO/noto-lark. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -15,16 +15,16 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/noto/noto-home/tools/noto-resync.sh</string>
+    <string>/PATH/TO/noto-lark/tools/noto-resync.sh</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/noto/noto-home</string>
+  <string>/PATH/TO/noto-lark</string>
 
   <key>EnvironmentVariables</key>
   <dict>
     <key>LOLABOT_HOME</key>
-    <string>/Users/noto/noto-home</string>
+    <string>/PATH/TO/noto-lark</string>
   </dict>
 
   <key>StartCalendarInterval</key>
@@ -34,8 +34,8 @@
   </dict>
 
   <key>StandardOutPath</key>
-  <string>/Users/noto/noto-home/lark/resync.log</string>
+  <string>/PATH/TO/noto-lark/lark/resync.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/noto/noto-home/lark/resync.log</string>
+  <string>/PATH/TO/noto-lark/lark/resync.log</string>
 </dict>
 </plist>
