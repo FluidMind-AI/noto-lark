@@ -10,7 +10,7 @@ they're doing and saying back to it."
 
 Sections (top to bottom):
 
-  - Filter bar       — sticky; "All team members" or a single chip with ×
+  - Filter bar       — sticky; "All users" or a single chip with ×
                        to clear. Every other user is a click away.
   - Hero KPIs        — 6 tiles. Volume, attention, top workflow, spend,
                        OAuth state, oldest corpus source.
@@ -28,7 +28,7 @@ Sections (top to bottom):
 URL contract:
   /dashboard?key=<SECRET>                 — global view
   /dashboard?key=...&user=<open_id>       — drill into one user
-  /dashboard?key=...&sort=<key>           — sort the team members table
+  /dashboard?key=...&sort=<key>           — sort the users table
 
 CLI:
   python tools/dashboard.py > out.html
@@ -54,7 +54,7 @@ from config import load_config, get_home, get_path  # noqa: E402
 WINDOW_DAYS = 7                          # rolling window the dashboard tracks
 DISPLAY_TZ = "Asia/Singapore"
 
-# Sort keys the team members table accepts (column -> SQL fragment).
+# Sort keys the users table accepts (column -> SQL fragment).
 _SORT_KEYS = {
     "msgs":     "msgs_window DESC",
     "msgs30":   "msgs_30d DESC",
@@ -317,7 +317,7 @@ def _bot_stats() -> Dict[str, Any]:
 def section_filter_bar(state: State, users: List[Dict[str, Any]],
                        active_user: Optional[Dict[str, Any]]) -> str:
     """Active user chip (with × to clear) on the left; the rest of
-    the team members as quiet links so a manager can hop between any of
+    the users as quiet links so a manager can hop between any of
     them in one click."""
     if active_user:
         name = _display(active_user["open_id"], active_user.get("display_name"))
@@ -329,7 +329,7 @@ def section_filter_bar(state: State, users: List[Dict[str, Any]],
         others = [u for u in users if u["open_id"] != active_user["open_id"]]
         sub = "Filtering everything below to this user."
     else:
-        chip = '<span class="chip-all">All team members</span>'
+        chip = '<span class="chip-all">All users</span>'
         others = users
         sub = ("Click a user below to drill in. "
                "Every section will filter to just them.")
@@ -399,7 +399,7 @@ def section_hero(state: State, kpis: Dict[str, Any],
         oauth_label = "not authorized"
 
     # Active drafting sessions count (from submission_sessions) — a useful
-    # "right now" signal: how many team members are mid-flight on a draft.
+    # "right now" signal: how many users are mid-flight on a draft.
     active_sessions = 0
     sub_db = os.path.join(get_home(), "indexes", "submissions.db")
     try:
@@ -418,7 +418,7 @@ def section_hero(state: State, kpis: Dict[str, Any],
     tiles = [
         tile(f"Messages · L{WINDOW_DAYS}d",
              _fmt_int(kpis.get("messages")),
-             f"{_fmt_int(kpis.get('active_users'))} active team members"),
+             f"{_fmt_int(kpis.get('active_users'))} active users"),
         tile("Top workflow",
              _esc(top_wf_label),
              f"{_fmt_int(kpis.get('top_workflow_n'))} invocations"),
@@ -438,10 +438,10 @@ def section_hero(state: State, kpis: Dict[str, Any],
 
 
 # ---------------------------------------------------------------------------
-# Section: team members table
+# Section: users table
 # ---------------------------------------------------------------------------
 
-def section_team members(state: State, users: List[Dict[str, Any]]) -> str:
+def section_users(state: State, users: List[Dict[str, Any]]) -> str:
     real_users = [u for u in users
                   if not str(u.get("open_id", "")).startswith("ou_test")
                   and not str(u.get("open_id", "")).startswith("ou_smoke")]
@@ -520,7 +520,7 @@ def section_team members(state: State, users: List[Dict[str, Any]]) -> str:
 
 def section_workflows(state: State, rows: List[Dict[str, Any]]) -> str:
     title = ("Workflows" + (
-        " · filtered to this user" if state.user else " · all team members"))
+        " · filtered to this user" if state.user else " · all users"))
     if not rows:
         return _card(title,
                      '<p class="empty">No workflow invocations recorded in '
@@ -1003,7 +1003,7 @@ def section_bot_strip() -> str:
 # Section: user memory (per-user persistent context)
 # ---------------------------------------------------------------------------
 # Two modes:
-#   - All team members: table — name, fact count, last write, preview.
+#   - All users: table — name, fact count, last write, preview.
 #   - Filtered (?user=ou_xxx): full listing of every fact file for that
 #     user + the recent write-log tail. Operator audit surface.
 #
@@ -1014,7 +1014,7 @@ def section_user_memory(state: State,
                              users: List[Dict[str, Any]]) -> str:
     try:
         from user_memory import (
-            all_team members_with_memory, summary as rm_summary,
+            all_users_with_memory, summary as rm_summary,
             list_facts as rm_list, tail_write_log as rm_log,
         )
     except Exception as e:
@@ -1083,7 +1083,7 @@ def section_user_memory(state: State,
 
     # Overview: one row per user with any memory
     rows = []
-    for open_id in all_team members_with_memory():
+    for open_id in all_users_with_memory():
         s = rm_summary(open_id)
         if s["fact_count"] == 0:
             continue
@@ -1545,7 +1545,7 @@ def render_dashboard(filter_user: Optional[str] = None,
         '<div class="wrap">',
         section_bot_strip(),
         section_hero(state, kpis, oldest, newest, oauth),
-        section_team members(state, users),
+        section_users(state, users),
         section_workflows(state, wf),
         section_tokens(state, daily, wf),
         section_feedback(state),
