@@ -285,3 +285,21 @@ startup and aborts if one is ever introduced. Block-level edits
 as an audit trail); whole-object deletion is not. If a feature seems
 to require deleting a Lark object, redesign the feature — the guard
 will win.
+
+## Raw markdown appearing in docs (`**bold**`, `###` as literal text)
+
+**Symptom:** docs the bot creates or edits show literal `**`, `###`
+and `-` characters instead of formatting.
+
+**Cause:** Lark text blocks hold styled *runs*, not markdown. Any
+writer that pushes LLM output as plain text runs (especially the
+single-body-block update path used for in-place edits) leaves the
+markdown tokens visible. Heading/bullet *blocks* also can't exist
+inside a text block, so a naive converter can't fix an edit path.
+
+**Fix (implemented):** every writer feeds text through one inline
+parser (`_md_inline_segments`: links, `**bold**`, `*italic*` → styled
+runs). The single-text-block path additionally emulates structure —
+heading lines render as bold, `-`/`*` list markers become `•`.
+If you add a new write path, use these helpers; never push raw LLM
+text into `TextRun.content`.

@@ -158,6 +158,56 @@ def lark_config() -> Dict[str, Any]:
     return load_config().get("lark", {}) or {}
 
 
+import re as _re_mod
+
+
+def _md_inline_segments(text):
+    """Split text into (text, bold, italic, url) segments for inline
+    markdown: [label](url), **bold**, *italic*. Shared by the block
+    builder and the text-block chunker so no writer ever leaves raw
+    tokens in a doc."""
+    out = []
+    link_re = _re_mod.compile(r"\[([^\]]+?)\]\((https?://[^)\s]+)\)")
+    pos = 0
+    for m in link_re.finditer(text):
+        if m.start() > pos:
+            out.extend(_md_bold_ital(text[pos:m.start()]))
+        out.append((m.group(1), False, False, m.group(2)))
+        pos = m.end()
+    if pos < len(text):
+        out.extend(_md_bold_ital(text[pos:]))
+    return [s for s in out if s[0]]
+
+
+def _md_bold_ital(text):
+    out = []
+    bold_re = _re_mod.compile(r"\*\*([^*]+?)\*\*")
+    pos = 0
+    for m in bold_re.finditer(text):
+        if m.start() > pos:
+            out.extend(_md_ital(text[pos:m.start()]))
+        out.append((m.group(1), True, False, None))
+        pos = m.end()
+    if pos < len(text):
+        out.extend(_md_ital(text[pos:]))
+    return out
+
+
+def _md_ital(text):
+    out = []
+    ital_re = _re_mod.compile(r"(?<![\w*])\*([^*\n]+?)\*(?![\w*])|"
+                              r"(?<![\w_])_([^_\n]+?)_(?![\w_])")
+    pos = 0
+    for m in ital_re.finditer(text):
+        if m.start() > pos:
+            out.append((text[pos:m.start()], False, False, None))
+        out.append((m.group(1) or m.group(2), False, True, None))
+        pos = m.end()
+    if pos < len(text):
+        out.append((text[pos:], False, False, None))
+    return out
+
+
 def _base_url() -> str:
     return lark_config().get("base_url", "https://open.larksuite.com").rstrip("/")
 
@@ -797,15 +847,20 @@ class LarkClient:
                 yield (content[pos:], None)
 
         def _run_for(text: str, link_url: Optional[str],
-                     color: Optional[int] = None):
+                     color: Optional[int] = None,
+                     bold: bool = False, italic: bool = False):
             rb = TextRun.builder().content(text[:2000])
-            if link_url or color:
+            if link_url or color or bold or italic:
                 sb = TextElementStyle.builder()
                 if link_url:
                     sb = sb.link(Link.builder().url(_urlp.quote(
                         link_url, safe=":/?#[]@!$&'()*+,;=%")).build())
                 if color:
                     sb = sb.text_color(int(color))
+                if bold:
+                    sb = sb.bold(True)
+                if italic:
+                    sb = sb.italic(True)
                 rb = rb.text_element_style(sb.build())
             return TextElement.builder().text_run(rb.build()).build()
 
@@ -813,9 +868,12 @@ class LarkClient:
             bt, field = _BLOCK_KINDS.get(bd.get("kind"), (2, "text"))
             content = (bd.get("text") or "").strip() or " "
             color = bd.get("color")    # Lark text_color enum (1 = red)
+            # inline markdown -> styled runs (links + **bold** +
+            # *italic*), so LLM output never lands as literal tokens
             elements = [
-                _run_for(seg, url, color)
-                for seg, url in _segments(content) if seg
+                _run_for(seg, url, color, bold=b, italic=i)
+                for seg, b, i, url in _md_inline_segments(content)
+                if seg
             ]
             if not elements:
                 elements = [_run_for(" ", None)]
@@ -893,24 +951,31 @@ class LarkClient:
             if pos < len(content):
                 yield (content[pos:], None)
 
-        def _run_for(text: str, link_url: Optional[str]):
+        def _run_for(text: str, link_url: Optional[str],
+                     bold: bool = False, italic: bool = False):
             rb = TextRun.builder().content(text[:2000])
-            if link_url:
-                # Lark wants the URL percent-encoded; quote leaves the
-                # url-structure chars intact so https://… stays clean.
-                rb = rb.text_element_style(
-                    TextElementStyle.builder()
-                    .link(Link.builder().url(_urlp.quote(
+            if link_url or bold or italic:
+                sb = TextElementStyle.builder()
+                if link_url:
+                    # Lark wants the URL percent-encoded; quote leaves
+                    # the url-structure chars intact.
+                    sb = sb.link(Link.builder().url(_urlp.quote(
                         link_url, safe=":/?#[]@!$&'()*+,;=%")).build())
-                    .build())
+                if bold:
+                    sb = sb.bold(True)
+                if italic:
+                    sb = sb.italic(True)
+                rb = rb.text_element_style(sb.build())
             return TextElement.builder().text_run(rb.build()).build()
 
         def _mk(bd: Dict[str, Any]):
             bt, field = _BLOCK_KINDS.get(bd.get("kind"), (2, "text"))
             content = (bd.get("text") or "").strip() or " "
+            # inline markdown -> styled runs, so **bold** from the LLM
+            # never lands as literal asterisks (2026-07-06)
             elements = [
-                _run_for(seg, url)
-                for seg, url in _segments(content)
+                _run_for(seg, url, bold=b, italic=i)
+                for seg, b, i, url in _md_inline_segments(content)
                 if seg
             ]
             if not elements:
@@ -956,15 +1021,55 @@ class LarkClient:
     # blocks; the assert_no_lark_delete scan still passes.
     @staticmethod
     def _chunk_runs(content: str, chunk: int = 1800) -> List[Any]:
-        from lark_oapi.api.docx.v1 import TextElement, TextRun
-        s = content or " "
-        runs = []
-        for i in range(0, len(s), chunk):
-            runs.append(TextElement.builder()
-                        .text_run(TextRun.builder()
-                                  .content(s[i:i + chunk]).build())
-                        .build())
-        return runs
+        """Markdown-aware text runs for a single text block.
+
+        Was a raw chunker — every `**`, `###` and `-` the LLM emitted
+        landed LITERALLY in the doc (operator report 2026-07-06:
+        update_text_doc is used by all v2+ edits, so edited docs showed
+        raw markdown). A text block can't hold real heading/bullet
+        blocks, so we emulate: heading lines render as bold, list
+        markers become bullets/glyphs, and inline **bold** / *italic* /
+        [label](url) become styled runs."""
+        from lark_oapi.api.docx.v1 import (TextElement, TextRun,
+                                           TextElementStyle, Link)
+        import urllib.parse as _urlp
+
+        def _mk(text_piece: str, bold=False, italic=False, url=None):
+            out = []
+            for i in range(0, max(len(text_piece), 1), chunk):
+                piece = text_piece[i:i + chunk] or " "
+                rb = TextRun.builder().content(piece)
+                if bold or italic or url:
+                    sb = TextElementStyle.builder()
+                    if bold:
+                        sb = sb.bold(True)
+                    if italic:
+                        sb = sb.italic(True)
+                    if url:
+                        sb = sb.link(Link.builder()
+                                     .url(_urlp.quote(url, safe=":/?#&=%.,+-_~"))
+                                     .build())
+                    rb = rb.text_element_style(sb.build())
+                out.append(TextElement.builder()
+                           .text_run(rb.build()).build())
+            return out
+
+        runs: List[Any] = []
+        lines = (content or " ").split("\n")
+        for li, raw_line in enumerate(lines):
+            line, line_bold = raw_line, False
+            m = _re_mod.match(r"^(#{1,6})\s+(.*)$", line)
+            if m:
+                line, line_bold = m.group(2), True
+            elif _re_mod.match(r"^\s*[-*]\s+", line):
+                line = _re_mod.sub(r"^(\s*)[-*]\s+", r"\1• ", line)
+            if li > 0:
+                line = "\n" + line
+            for seg_text, seg_bold, seg_ital, seg_url in \
+                    _md_inline_segments(line):
+                runs.extend(_mk(seg_text, bold=seg_bold or line_bold,
+                                italic=seg_ital, url=seg_url))
+        return runs or _mk(" ")
 
     def create_text_doc(self, title: str, content: str,
                         folder_token: Optional[str] = None
