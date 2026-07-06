@@ -10,6 +10,7 @@ lark:
   engineering_chat_id: ""
   # Shared calendar for add-to-calendar entries (optional; falls back
   # to the bot user's primary calendar):
+  internal_email_domain: ""     # ONLY these emails can be invited to events (empty = none)
   interview_calendar_id: ""
   # Expenses Base (optional — enables /expense + receipt logging):
   expenses_base_app_token: ""

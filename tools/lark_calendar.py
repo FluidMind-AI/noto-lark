@@ -214,6 +214,24 @@ def add_attendees(calendar_id: str, event_id: str,
     want a clean attendee record."""
     if not emails and not open_ids:
         return {}
+    # HARD GUARD (operator rule 2026-07-06): email invitees must be on
+    # the company domain (config lark.internal_email_domain). External
+    # addresses are dropped and logged — NEVER invited, no matter which
+    # caller passes them. Unset domain = no email invitees at all.
+    from config import load_config
+    _dom = ((load_config().get("lark") or {})
+            .get("internal_email_domain", "") or "").lower().lstrip("@")
+    kept = []
+    for e in (emails or []):
+        if _dom and str(e).lower().endswith("@" + _dom):
+            kept.append(e)
+        else:
+            print(f"[lark_calendar] BLOCKED external invitee {e!r} "
+                  f"(allowed domain: {_dom or '(none configured)'})",
+                  file=sys.stderr, flush=True)
+    emails = kept
+    if not emails and not open_ids:
+        return {}
     attendees = [{"type": "third_party", "third_party_email": e}
                  for e in (emails or [])]
     attendees += [{"type": "user", "user_id": oid}
@@ -252,6 +270,34 @@ def freebusy(open_id: str, start: datetime, end: datetime
         print(f"[lark_calendar] freebusy failed: {str(e)[:120]}",
               file=sys.stderr, flush=True)
         return []
+
+
+def list_attendees(calendar_id: str, event_id: str
+                   ) -> List[Dict[str, Any]]:
+    r = _req("GET", f"/open-apis/calendar/v4/calendars/"
+                    f"{urllib.parse.quote(calendar_id)}/events/"
+                    f"{urllib.parse.quote(event_id)}/attendees")
+    return ((r.get("data") or {}).get("items")) or []
+
+
+def remove_attendees_by_email(calendar_id: str, event_id: str,
+                              emails: List[str]) -> int:
+    """Uninvite specific email attendees (they receive a standard
+    cancellation). Used for remediation when an external address was
+    invited by mistake — the domain guard in add_attendees prevents
+    new occurrences."""
+    want = {e.lower() for e in emails}
+    ids = [a.get("attendee_id") for a in
+           list_attendees(calendar_id, event_id)
+           if (a.get("third_party_email") or "").lower() in want
+           and a.get("attendee_id")]
+    if not ids:
+        return 0
+    _req("POST", f"/open-apis/calendar/v4/calendars/"
+                 f"{urllib.parse.quote(calendar_id)}/events/"
+                 f"{urllib.parse.quote(event_id)}/attendees/batch_delete",
+         {"attendee_ids": ids})
+    return len(ids)
 
 
 def get_event(calendar_id: str, event_id: str) -> Dict[str, Any]:
