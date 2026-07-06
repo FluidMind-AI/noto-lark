@@ -55,6 +55,8 @@ items, currency, total, date as plain text; else null>",
 if not determinable>",
      "start_time": "<HH:MM 24h, or null>",
      "end_time": "<HH:MM 24h, or null>",
+     "timezone": "<IANA zone like America/New_York IF a timezone is
+named or implied (ET/EST/PT/HKT/JST/'NY time'…), else null>",
      "location": "<address/room/venue, or null>",
      "meeting_link": "<zoom/teams/meet URL if shown, or null>",
      "is_physical": <true if it's an in-person meeting (venue/address/
@@ -165,6 +167,8 @@ Extract the event. Reply with ONLY a JSON object:
 not given>",
  "start_time": "<HH:MM 24h, or null>",
  "end_time": "<HH:MM 24h, or null>",
+ "timezone": "<IANA zone like America/New_York IF named or implied
+(ET/PT/HKT/'3pm Eastern'…), else null>",
  "location": "<venue/address if given, or null>",
  "meeting_link": "<URL if given, or null>",
  "is_physical": <true for dinners/coffees/venues, false for calls/
@@ -205,7 +209,8 @@ Their reply:
 
 Merge the reply into the fields. Reply with ONLY the full updated JSON
 object, same keys ("title","date" YYYY-MM-DD,"start_time" HH:MM,
-"end_time","location","meeting_link","is_physical","notes"). If the
+"end_time","timezone" IANA-or-null,"location","meeting_link",
+"is_physical","notes"). If the
 reply says to cancel/stop, add "cancelled": true.
 """
 
@@ -252,6 +257,16 @@ def check_clashes(requester_open_id: str, ev: Dict[str, Any]
     out: Dict[str, Any] = {"duplicate": None, "conflicts": []}
     try:
         start, end = _parse_times(ev)
+        # localize to the event's tz so absolute-time comparison is
+        # right even for '3pm Eastern' proposals
+        tzn = event_tz(requester_open_id, ev)
+        if tzn:
+            try:
+                from zoneinfo import ZoneInfo
+                start = start.replace(tzinfo=ZoneInfo(tzn))
+                end = end.replace(tzinfo=ZoneInfo(tzn))
+            except Exception:
+                pass
     except Exception:
         return out
     title_toks = {t for t in re.findall(
@@ -327,11 +342,37 @@ def clash_question(clash: Dict[str, Any], ev: Dict[str, Any]) -> str:
             f"or skip? (reply 'add anyway' / 'skip')")
 
 
+def _user_tz(open_id: str) -> str:
+    """The requester's home timezone: operators.yaml `timezone:` per
+    person, else the org default. (Operator rule 2026-07-06: when the
+    request names no timezone, assume the USER's, not the server's.)"""
+    try:
+        import yaml, os
+        from config import get_home
+        ops = yaml.safe_load(open(os.path.join(
+            get_home(), "memory", "operators.yaml"))) or {}
+        for v in ops.values():
+            if isinstance(v, dict) and v.get("open_id") == open_id \
+                    and v.get("timezone"):
+                return str(v["timezone"])
+    except Exception:
+        pass
+    return ""
+
+
+def event_tz(requester_open_id: str, ev: Dict[str, Any]) -> str:
+    """Timezone priority: named in the request > requester's own >
+    org default (create_event resolves '' to the configured tz)."""
+    return ((ev.get("timezone") or "").strip()
+            or _user_tz(requester_open_id))
+
+
 def create_for(requester_open_id: str, ev: Dict[str, Any]
                ) -> Dict[str, Any]:
     """Create the event on the primary calendar and invite the
     requester by open_id so it lands on THEIR calendar, with 60- and
-    15-minute reminders."""
+    15-minute reminders. Times are interpreted in event_tz() and the
+    event is attendee-editable."""
     try:
         from lark_calendar import primary_calendar, create_event
         start, end = _parse_times(ev)
@@ -348,10 +389,13 @@ def create_for(requester_open_id: str, ev: Dict[str, Any]
             description="\n".join(desc_bits),
             location=(ev.get("location") or "")[:300],
             reminders=REMINDER_MINUTES,
-            attendee_open_ids=[requester_open_id])
+            attendee_open_ids=[requester_open_id],
+            tz_name=event_tz(requester_open_id, ev),
+            attendees_can_edit=True)
         return {"ok": bool(event.get("event_id")),
                 "event_id": event.get("event_id"),
                 "attendee_error": event.get("_attendee_error"),
+                "tz_used": event_tz(requester_open_id, ev),
                 "start": start, "end": end}
     except Exception as e:
         return {"ok": False, "error": str(e)[:200]}
@@ -359,6 +403,9 @@ def create_for(requester_open_id: str, ev: Dict[str, Any]
 
 def confirmation(ev: Dict[str, Any], res: Dict[str, Any]) -> str:
     when = f"{ev.get('date')} {ev.get('start_time')}"
+    tzn = (res.get("tz_used") or ev.get("timezone") or "").strip()
+    if tzn:
+        when += f" ({tzn.split('/')[-1].replace('_', ' ')} time)"
     txt = (f"📅 Added to your calendar: **{ev.get('title')}** — {when}"
            + (f", {ev['location']}" if ev.get("location") else "")
            + "\nReminders set for 1 hour and 15 minutes before.")

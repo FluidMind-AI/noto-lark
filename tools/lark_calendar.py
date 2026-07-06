@@ -154,12 +154,18 @@ def create_event(calendar_id: str, summary: str,
                  attendee_emails: Optional[List[str]] = None,
                  location: str = "",
                  reminders: Optional[List[int]] = None,
-                 attendee_open_ids: Optional[List[str]] = None
+                 attendee_open_ids: Optional[List[str]] = None,
+                 tz_name: str = "",
+                 attendees_can_edit: bool = True
                  ) -> Dict[str, Any]:
-    """Create an event. `start`/`end` are timezone-aware OR naive (we
-    treat naive as the operator's local tz). Returns the created event
-    record (including the new event_id)."""
-    tz = _tz()
+    """Create an event. `start`/`end` are timezone-aware OR naive.
+    Naive datetimes are localized to `tz_name` when given (user
+    feedback 2026-07-06: '3 PM Eastern' was being scheduled at 3 PM
+    Singapore — the requested timezone must survive end-to-end), else
+    the configured default tz. attendees_can_edit sets Lark's
+    attendee_ability=can_modify_event so invitees can move the event /
+    add people afterwards. Returns the created event record."""
+    tz = (tz_name or "").strip() or _tz()
     if start.tzinfo is None:
         try:
             from zoneinfo import ZoneInfo
@@ -183,6 +189,9 @@ def create_event(calendar_id: str, summary: str,
         },
         "visibility":  "default",
         "color":       0,
+        # invitees may edit (time/attendees) — user feedback
+        "attendee_ability": ("can_modify_event" if attendees_can_edit
+                             else "can_see_others"),
     }
     if location:
         body["location"] = {"name": location[:500]}
