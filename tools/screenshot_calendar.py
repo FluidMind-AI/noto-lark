@@ -360,11 +360,119 @@ def _user_tz(open_id: str) -> str:
     return ""
 
 
+# City -> IANA tz for travel-event detection. Extend freely.
+_CITY_TZ = {
+    "singapore": "Asia/Singapore", "hong kong": "Asia/Hong_Kong",
+    "hk": "Asia/Hong_Kong", "tokyo": "Asia/Tokyo", "osaka": "Asia/Tokyo",
+    "seoul": "Asia/Seoul", "shanghai": "Asia/Shanghai",
+    "beijing": "Asia/Shanghai", "taipei": "Asia/Taipei",
+    "manila": "Asia/Manila", "bangkok": "Asia/Bangkok",
+    "jakarta": "Asia/Jakarta", "kuala lumpur": "Asia/Kuala_Lumpur",
+    "kl": "Asia/Kuala_Lumpur", "sydney": "Australia/Sydney",
+    "melbourne": "Australia/Melbourne", "dubai": "Asia/Dubai",
+    "abu dhabi": "Asia/Dubai", "doha": "Asia/Qatar",
+    "riyadh": "Asia/Riyadh", "mumbai": "Asia/Kolkata",
+    "delhi": "Asia/Kolkata", "london": "Europe/London",
+    "paris": "Europe/Paris", "frankfurt": "Europe/Berlin",
+    "munich": "Europe/Berlin", "berlin": "Europe/Berlin",
+    "madrid": "Europe/Madrid", "milan": "Europe/Rome",
+    "rome": "Europe/Rome", "zurich": "Europe/Zurich",
+    "geneva": "Europe/Zurich", "amsterdam": "Europe/Amsterdam",
+    "new york": "America/New_York", "nyc": "America/New_York",
+    "ny": "America/New_York", "atlanta": "America/New_York",
+    "miami": "America/New_York", "boston": "America/New_York",
+    "washington": "America/New_York", "dc": "America/New_York",
+    "chicago": "America/Chicago", "houston": "America/Chicago",
+    "dallas": "America/Chicago", "toronto": "America/Toronto",
+    "vancouver": "America/Vancouver", "seattle": "America/Los_Angeles",
+    "san francisco": "America/Los_Angeles", "sf": "America/Los_Angeles",
+    "los angeles": "America/Los_Angeles", "la": "America/Los_Angeles",
+    "mexico city": "America/Mexico_City", "bogota": "America/Bogota",
+    "bogotá": "America/Bogota", "medellin": "America/Bogota",
+    "medellín": "America/Bogota", "sao paulo": "America/Sao_Paulo",
+    "são paulo": "America/Sao_Paulo",
+}
+
+_TRAVEL_RE = re.compile(
+    r"(?:travel(?:ing|ling)?(?:\s+to)?|trip\s+to|flying\s+to|"
+    r"fly\s+to|in|at|@|✈️?\s*)\s*[:\-]?\s*([A-Za-zÀ-ÿ .]{2,20})\s*$",
+    re.I)
+
+_cal_cache: Dict[str, Any] = {}
+
+
+def _travel_tz(open_id: str, date_str: str) -> str:
+    """If the person has a travel-shaped event on their SHARED calendar
+    covering `date_str` ('Travel: Tokyo', 'Trip to London', '✈️ HK',
+    'In New York'), return that city's timezone. Requires the person to
+    share their calendar with the bot user (Reader is enough); '' when
+    no access or no travel found. (Operator rule 2026-07-08: check for
+    travel before assuming someone's home timezone.)"""
+    try:
+        import yaml, os, time as _t
+        from config import get_home
+        from lark_calendar import list_calendars, list_events
+        # person's display name
+        ops = yaml.safe_load(open(os.path.join(
+            get_home(), "memory", "operators.yaml"))) or {}
+        name = next((v.get("name") for v in ops.values()
+                     if isinstance(v, dict)
+                     and v.get("open_id") == open_id), "")
+        if not name:
+            return ""
+        first = name.split()[0].lower()
+        # calendar list is cached 10 min (it's one API call otherwise)
+        if _cal_cache.get("ts", 0) < _t.time() - 600:
+            _cal_cache["cals"] = list_calendars()
+            _cal_cache["ts"] = _t.time()
+        cal = next((c for c in _cal_cache.get("cals", [])
+                    if first in (c.get("summary") or "").lower()
+                    and c.get("role") in ("reader", "writer", "owner")),
+                   None)
+        if not cal:
+            return ""
+        day = datetime.strptime(date_str, "%Y-%m-%d")
+        evs = list_events(cal["calendar_id"],
+                          start_ts=int(day.timestamp()),
+                          end_ts=int(day.timestamp()) + 86400)
+        for e in evs:
+            title = (e.get("summary") or "").strip()
+            # The travel phrase must be about the CALENDAR OWNER:
+            # anchored at the start of the title, optionally after the
+            # owner's own first name ("Sharmaine in Tokyo" on her own
+            # calendar). "Sheldon in London" on Sharmaine's calendar is
+            # about someone else — live test caught exactly that.
+            probe = title
+            if probe.lower().startswith(first):
+                probe = probe[len(first):].lstrip(" :–-")
+            m = _TRAVEL_RE.match(probe)
+            if not m:
+                continue
+            city = m.group(1).strip().lower().rstrip(".")
+            tz = _CITY_TZ.get(city)
+            if tz:
+                print(f"[screenshot_calendar] travel detected for "
+                      f"{name}: {title!r} -> {tz}", file=sys.stderr,
+                      flush=True)
+                return tz
+    except Exception:
+        pass
+    return ""
+
+
 def event_tz(requester_open_id: str, ev: Dict[str, Any]) -> str:
-    """Timezone priority: named in the request > requester's own >
+    """Timezone priority (operator rules 2026-07-06/08):
+    named in the request > travel event on the requester's shared
+    calendar for that date > requester's home tz (operators.yaml) >
     org default (create_event resolves '' to the configured tz)."""
-    return ((ev.get("timezone") or "").strip()
-            or _user_tz(requester_open_id))
+    named = (ev.get("timezone") or "").strip()
+    if named:
+        return named
+    if ev.get("date"):
+        t = _travel_tz(requester_open_id, ev["date"])
+        if t:
+            return t
+    return _user_tz(requester_open_id)
 
 
 def create_for(requester_open_id: str, ev: Dict[str, Any]
