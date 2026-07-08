@@ -73,6 +73,9 @@ supervisor so the bot can't die silently.
 
 ## Quick start
 
+**Using Noto** (for your team): [docs/user-guide.md](docs/user-guide.md) — what it can do and how to get the most out of it.
+
+**Setting it up** (for the admin):
 1. Read [docs/setup.md](docs/setup.md) — the full Console click-path
    (scopes, events, the version-publish trap) and machine setup.
 2. `cp notolark.yaml.example notolark.yaml` and
