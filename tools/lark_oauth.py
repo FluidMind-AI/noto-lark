@@ -59,7 +59,12 @@ DEFAULT_SCOPES = ("offline_access wiki:wiki:readonly "
 NOAH_SCOPES = ("offline_access "
                "mail:user_mailbox.message:readonly "
                "calendar:calendar "
-               "contact:user.email:readonly")
+               "contact:user.email:readonly "
+               # task v2: per-user reminder lists (lark_tasks.py).
+               # Write scope ≠ delete capability — lark_tasks.py has
+               # no removal code and is covered by the delete-scan.
+               "task:task:read task:task:write "
+               "task:tasklist:read task:tasklist:write")
 
 _SCOPES_BY_IDENTITY = {
     "operator": DEFAULT_SCOPES,

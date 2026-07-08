@@ -2,8 +2,8 @@
 
 Noto is a knowledge agent that lives in your Lark workspace. It has
 read your organization's wiki, documents, and chats, and it can answer
-questions, draft and edit documents, and handle your calendar and
-expenses — all from a Lark message.
+questions, draft and edit documents, and handle your calendar,
+reminders, and expenses — all from a Lark message.
 
 **How to talk to Noto:** DM it directly, or @mention it in a group. In
 a DM you don't need to @mention — just talk. Noto answers in the same
@@ -81,7 +81,33 @@ time. Two things make it bulletproof:
 **Invitees:** Noto only ever invites people inside your organization to
 events (configurable by email domain) — never outside contacts.
 
-## 4. Expenses
+## 4. Reminders — your personal task list
+
+Say *"noto remind me to …"* and it goes on a private Lark task list
+called **"Noto — \<your name\>"** (created the first time you use it,
+visible only to you and Noto — it shows up in your Lark **Tasks** app,
+and you can tick things off there directly).
+
+- *"remind me to call Joe tomorrow at 3pm"* → task with a **Lark
+  alert at 3pm your time** (say *"3pm Eastern"* and that wins — same
+  timezone rules as the calendar, travel events included).
+- *"remind me to send the report on Friday"* → dated task, no clock
+  alert; it shows up in Friday's morning digest.
+- *"remind me to reply to Kim"* → undated task on your list.
+
+**Every morning around 8am your time**, Noto DMs you a digest of
+what's **due today** plus anything **overdue** — and stays quiet if
+there's nothing pending.
+
+Managing the list in chat:
+- *"what's on my list?"* — see your open reminders.
+- *"done with the Joe call"* — tick one off (Noto asks which one if
+  several match).
+
+Noto never deletes tasks — completed items stay in the list's history.
+*(This feature is optional and off by default; your admin enables it.)*
+
+## 5. Expenses
 
 DM Noto a **receipt** (photo or PDF) or type *"/expense 42 SGD taxi to
 client meeting yesterday."* Noto reads it and adds a row to your
@@ -90,7 +116,7 @@ for the usual approval. It'll ask if it can't read the amount or
 currency. *(This feature is optional and off by default; your admin
 enables it.)*
 
-## 5. Noto learns from you
+## 6. Noto learns from you
 
 - **Thumbs-up what's good:** react 👍 on a great answer (or reply
   "perfect"). Noto remembers that question-and-answer as a hint for
@@ -105,7 +131,7 @@ enables it.)*
 - **Per-user memory** is DM-only and private to you — Noto won't use
   your personal context in group chats.
 
-## 6. Handy commands
+## 7. Handy commands
 
 | Command | What it does |
 |---|---|
@@ -116,7 +142,7 @@ enables it.)*
 
 Most things don't need a command — just ask in plain language.
 
-## 7. Good habits, at a glance
+## 8. Good habits, at a glance
 
 - **Be specific** — name the project, doc, person, or topic.
 - **Share your calendar with Noto** and **keep your travel on it** —

@@ -303,3 +303,38 @@ runs). The single-text-block path additionally emulates structure —
 heading lines render as bold, `-`/`*` list markers become `•`.
 If you add a new write path, use these helpers; never push raw LLM
 text into `TextRun.content`.
+
+## 20. Task v2 (reminders): the things that will bite
+
+**Visibility is membership, not sharing.** Same doctrine as #3: you
+never "share" a tasklist with anyone. Creating the tasklist with the
+target user as a `members` entry (`role: "editor"`) is what makes it
+appear in *their* Lark Tasks app. The creator (your bot user) becomes
+owner automatically — and if the creator also appears in `members`,
+Lark silently drops that entry (one role per user per list).
+
+**"Owner" in the task UI = the assignee.** To make a task read as
+owned by a person, add them to the task's `members` with
+`role: "assignee"`. No ownership-transfer call needed.
+
+**All-day due dates are UTC-midnight timestamps.** For
+`due.is_all_day: true`, `due.timestamp` (ms) must be 00:00 **UTC** of
+that date — local midnight shifts the date for most timezones. Timed
+dues are ordinary epoch-ms.
+
+**At-time alerts are `reminders: [{relative_fire_minute: 0}]`** on a
+timed due. It's minutes *before due*, max one per task, and needs the
+due set in the same create call.
+
+**Scope errors name `writeonly` variants.** A missing-permission 400
+(`code 99991679`) lists alternatives like
+`[task:tasklist:writeonly, task:tasklist:write]` — both exist in the
+console; the full pairs (`task:task:read/write`,
+`task:tasklist:read/write`) cover everything `lark_tasks.py` does.
+User scopes → re-OAuth the bot-user identity after approval (#16's
+refresher keeps them alive afterward).
+
+**Completion is a PATCH, not an endpoint.** `PATCH /task/v2/tasks/:guid`
+with `{"task": {"completed_at": "<ms>"}, "update_fields":
+["completed_at"]}`; `"0"` un-completes. Nothing here needs a delete
+call, which keeps the module clean under the #19 delete-scan.

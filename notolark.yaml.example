@@ -35,3 +35,6 @@ h2:
   personal_preferences_enabled: false
   expenses_enabled: false
   screenshot_calendar_enabled: false
+  reminders_enabled: false    # per-user Lark task lists + morning digest
+                              # (needs task:* user scopes + re-OAuth +
+                              #  deploy/com.noto.remindersdigest.plist)

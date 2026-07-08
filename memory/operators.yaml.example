@@ -5,3 +5,8 @@ your_admin:
   open_id: "ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
   role: admin
   super_admin: true       # can use ops buttons + manage panel users
+  timezone: "Asia/Singapore"   # IANA zone — drives "3pm" interpretation
+                               # + the 8am reminders morning digest
+# Add one record per teammate. `timezone` is required for anyone who
+# should get the reminders morning digest; records with
+# role: service_account are skipped by it.

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Noto reminders digest — runs every 15 minutes. Sends each
+     teammate their morning reminders DM once their LOCAL clock passes
+     08:00 (the team spans 8 timezones, so the job must tick all day;
+     per-person per-local-date state makes reruns free). No-op while
+     h2.reminders_enabled is off.
+     Edit paths below if the repo is not at /PATH/TO/noto-lark.
+
+     Install:
+       cp deploy/com.noto.remindersdigest.plist ~/Library/LaunchAgents/
+       launchctl load -w ~/Library/LaunchAgents/com.noto.remindersdigest.plist
+     Inspect:  launchctl list | grep com.noto.remindersdigest
+     Stop:     launchctl unload ~/Library/LaunchAgents/com.noto.remindersdigest.plist
+     Logs:     lark/reminders-digest.log AND lark/remindersdigest.{out,err}.log -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.noto.remindersdigest</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/PATH/TO/noto-lark/tools/reminders-digest-poll.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/PATH/TO/noto-lark</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LOLABOT_HOME</key>
+    <string>/PATH/TO/noto-lark</string>
+  </dict>
+
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <!-- Don't run at load — we trigger manually first to verify. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/PATH/TO/noto-lark/lark/remindersdigest.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/PATH/TO/noto-lark/lark/remindersdigest.err.log</string>
+</dict>
+</plist>

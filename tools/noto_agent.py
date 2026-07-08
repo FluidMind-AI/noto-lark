@@ -112,6 +112,27 @@ SKILLS YOU CAN CALL (each takes the args shown):
     VERBATIM as `details` — extraction happens downstream, and missing
     info (time, venue for in-person) gets asked automatically.
 
+- add_reminder(text)
+    The user asks Noto to remind/remember a personal to-do ("noto
+    remind me to call Joe tomorrow at 3pm", "remind me to send the
+    report on friday", "don't let me forget to reply to Kim"). Pass
+    their request VERBATIM as `text` — date/time words are resolved
+    downstream against their own timezone. The reminder lands in their
+    personal "Noto — <name>" Lark task list; a specific clock time
+    gets a Lark alert at that time, and due/overdue items show in
+    their morning digest. This is for THEIR OWN to-dos:
+    meetings/calls with a counterparty belong on the calendar
+    (add_calendar_entry).
+
+- list_reminders()
+    "what's on my list", "show my reminders / my tasks", "what did I
+    ask you to remind me about".
+
+- complete_reminder(query)
+    "done with the Joe call", "mark the report one done", "clear the
+    reminder about Kim" — `query` = the user's words identifying
+    which reminder to tick off.
+
 - clarify(question)
     Reply WITHOUT taking action — use when you need more info OR when
     two paths are plausible and the user should pick. COMPOSE THE
@@ -148,7 +169,7 @@ CURRENT MESSAGE:
 {message}
 
 Output ONE JSON object on a single line. No prose, no fences. Schema:
-{{"skill": "answer_question|create_doc|edit_doc|add_calendar_entry|clarify|defer",
+{{"skill": "answer_question|create_doc|edit_doc|add_calendar_entry|add_reminder|list_reminders|complete_reminder|clarify|defer",
   "args": {{...}},
   "reply": "optional short text to put in the card AFTER the skill runs (e.g. ack of self-correction)",
   "reason": "one short sentence explaining your choice"}}
@@ -191,7 +212,9 @@ def _plan(message: str, history: List[Any], parent_text: str,
     plan.setdefault("reason", "")
     if plan["skill"] not in (
             "answer_question", "create_doc", "edit_doc",
-            "add_calendar_entry", "clarify", "defer"):
+            "add_calendar_entry",
+            "add_reminder", "list_reminders", "complete_reminder",
+            "clarify", "defer"):
         plan["skill"] = "defer"
     return plan
 
@@ -471,6 +494,102 @@ def handle(message: str, chat_id: str, sender_open_id: str,
                              f"({res.get('error', '?')}).")
         if card:
             card.finalize(status="📅 Calendar", answer=body)
+        try:
+            from lark_bot import _record_bot
+            _record_bot(chat_id, body)
+        except Exception:
+            pass
+        return "done"
+
+    if skill == "add_reminder":
+        details = (args.get("text") or args.get("details")
+                   or message).strip()
+        from skills.reminders import add_reminder as _addr
+        res = _addr(sender_open_id, details,
+                    on_progress=(card.progress if card else None))
+        if res.get("ok"):
+            body = f"⏰ Got it — I'll remind you to **{res['summary']}**"
+            if res.get("due_display"):
+                body += f" ({res['due_display']}"
+                body += (", with a Lark alert at that time)."
+                         if res.get("alert") else ").")
+            else:
+                body += "."
+            body += (f"\nIt's on your “{res.get('tasklist_name','Noto')}” "
+                     f"list in Lark Tasks — due items show up in your "
+                     f"morning digest.")
+        elif res.get("error") == "reminders_disabled":
+            body = ("Reminders aren't switched on for this bot yet — "
+                    "ask your admin to enable h2.reminders_enabled.")
+        elif res.get("error") == "not_a_reminder":
+            body = ("I couldn't find a to-do in that — try something "
+                    "like “remind me to call Joe tomorrow 3pm”.")
+        else:
+            body = (f"Couldn't save that reminder "
+                    f"({res.get('error', '?')}).")
+        if card:
+            card.finalize(status="⏰ Reminders", answer=body)
+        try:
+            from lark_bot import _record_bot
+            _record_bot(chat_id, body)
+        except Exception:
+            pass
+        return "done"
+
+    if skill == "list_reminders":
+        from skills.reminders import list_reminders as _lsr
+        res = _lsr(sender_open_id)
+        if res.get("error") == "reminders_disabled":
+            body = ("Reminders aren't switched on for this bot yet — "
+                    "ask your admin to enable h2.reminders_enabled.")
+        elif not res.get("ok"):
+            body = f"Couldn't fetch your list ({res.get('error','?')})."
+        elif not res.get("items"):
+            body = ("📋 Your list is clear — nothing pending. Say "
+                    "“remind me to …” to add something.")
+        else:
+            lines = [f"📋 You have {res['count']} open "
+                     f"reminder{'s' if res['count'] != 1 else ''}:"]
+            for it in res["items"]:
+                line = f"  • {it['summary']}"
+                if it.get("due_display"):
+                    line += (f"  _({it['due_display']}"
+                             + (" — overdue ⚠️" if it.get("overdue")
+                                else "") + ")_")
+                lines.append(line)
+            lines.append("\n_Say “done with …” to tick one off._")
+            body = "\n".join(lines)
+        if card:
+            card.finalize(status="📋 Your reminders", answer=body)
+        try:
+            from lark_bot import _record_bot
+            _record_bot(chat_id, body)
+        except Exception:
+            pass
+        return "done"
+
+    if skill == "complete_reminder":
+        q = (args.get("query") or "").strip() or message
+        from skills.reminders import complete_reminder as _cpr
+        res = _cpr(sender_open_id, q)
+        if res.get("ok"):
+            body = f"✅ Done — ticked off **{res['summary']}**."
+        elif res.get("error") == "reminders_disabled":
+            body = ("Reminders aren't switched on for this bot yet — "
+                    "ask your admin to enable h2.reminders_enabled.")
+        elif res.get("error") == "no_open_reminders":
+            body = "Your list is already clear — nothing to tick off."
+        elif res.get("error") == "ambiguous":
+            body = ("A few reminders match — which one?\n" +
+                    "\n".join(f"  • {s}" for s in res.get("items", [])))
+        elif res.get("error") == "no_match":
+            body = ("Nothing on your list matches that. Open items:\n" +
+                    "\n".join(f"  • {s}" for s in res.get("items", [])))
+        else:
+            body = (f"Couldn't complete that reminder "
+                    f"({res.get('error', '?')}).")
+        if card:
+            card.finalize(status="⏰ Reminders", answer=body)
         try:
             from lark_bot import _record_bot
             _record_bot(chat_id, body)

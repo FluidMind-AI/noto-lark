@@ -156,6 +156,16 @@ via OAuth):**
 |---|---|---|
 | `calendar:calendar` | user | Create events, query free/busy |
 
+**Tasks (optional — per-user reminder lists + morning digest):**
+
+| Scope | Type | Why |
+|---|---|---|
+| `task:task:read` + `task:task:write` | user | Create/list/complete reminder tasks ("remind me to…"). Write ≠ delete: `lark_tasks.py` has no removal code and the startup delete-scan covers it. |
+| `task:tasklist:read` + `task:tasklist:write` | user | Create each user's "Noto — Name" tasklist and add them as editor member (that membership is what makes the list appear in their Lark Tasks app). |
+
+After approving new user scopes, re-OAuth the bot-user identity —
+scopes only attach to newly issued tokens.
+
 **Mail (optional — mailbox ingestion):**
 
 | Scope | Type | Why |
