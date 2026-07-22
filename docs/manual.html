@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Noto Lark — Instruction Manual</title>
+<style>
+  :root{--bg:#0e1116;--panel:#161b23;--panel2:#1c2330;--ink:#e8ecf3;--soft:#9aa7bd;
+        --brand:#6d7cff;--green:#3ecf8e;--orange:#f5a623;--red:#ff6b6b;--line:#242c3a}
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--bg);color:var(--ink);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:880px;margin:0 auto;padding:0 22px 80px}
+  header{padding:52px 0 8px;text-align:center}
+  header .bot{font-size:44px}
+  h1{font-size:30px;letter-spacing:-.5px;margin:6px 0 4px}
+  .tag{color:var(--soft);max-width:560px;margin:0 auto}
+  nav{position:sticky;top:0;background:rgba(14,17,22,.92);backdrop-filter:blur(6px);
+      display:flex;gap:4px;justify-content:center;flex-wrap:wrap;padding:12px 8px;
+      border-bottom:1px solid var(--line);margin:26px -22px 34px;z-index:5}
+  nav a{color:var(--soft);text-decoration:none;font-size:13px;padding:5px 11px;border-radius:20px}
+  nav a:hover{color:var(--ink);background:var(--panel2)}
+  section{margin:0 0 46px;scroll-margin-top:70px}
+  h2{font-size:21px;margin:0 0 4px;display:flex;align-items:center;gap:9px}
+  h2 .em{font-size:22px}
+  .lead{color:var(--soft);margin:0 0 16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:0 0 12px}
+  .card h3{font-size:15px;margin:0 0 6px}
+  .card p{color:var(--soft);font-size:14px}
+  .card p b, .card li b{color:var(--ink)}
+  .ex{background:var(--panel2);border-radius:8px;padding:9px 13px;margin:8px 0 2px;
+      font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c6d4f0}
+  ul{padding-left:20px;color:var(--soft);font-size:14px}
+  li{margin:4px 0}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--soft);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+  td:first-child{font-family:ui-monospace,Menlo,monospace;white-space:nowrap;color:#c6d4f0}
+  .pill{display:inline-block;padding:1px 9px;border-radius:20px;font-size:12px;font-weight:600}
+  .g{background:rgba(62,207,142,.14);color:var(--green)} .o{background:rgba(245,166,35,.14);color:var(--orange)}
+  .r{background:rgba(255,107,107,.14);color:var(--red)}
+  .foot{color:var(--soft);font-size:12.5px;text-align:center;border-top:1px solid var(--line);padding-top:22px}
+  a{color:var(--brand)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="bot">🤖</div>
+  <h1>Noto — Instruction Manual</h1>
+  <p class="tag">Your organization's knowledge agent on Lark. DM it, @mention it in a group,
+  or just reply to anything it says. This page: what it does, how to use it, and where its edges are.</p>
+</header>
+
+<nav>
+  <a href="#ask">Ask</a><a href="#email">Email</a>
+  <a href="#talk">Talking to Noto</a><a href="#auto">Automations</a>
+  <a href="#commands">Commands</a><a href="#limits">Privacy &amp; Limits</a>
+</nav>
+
+<section id="ask">
+  <h2><span class="em">🔍</span> Ask Noto anything</h2>
+  <p class="lead">Noto answers from the company's real knowledge — the wiki, docs, chats,
+  candidate files, firm intel and training material — and cites what it used.</p>
+  <div class="card">
+    <div class="ex">What's our policy on X? Where is the doc that covers Y?</div>
+    <div class="ex">Summarize what we know about [client/topic].</div>
+    <div class="ex">Who said what about [project] in the team chats?</div>
+    <p>Works in your DM or by @mentioning Noto in a group. Deeper questions take a minute or
+    two — you'll see progress in the answer card. A 👍 on a good answer teaches Noto that the
+    route it took was right.</p>
+  </div>
+</section>
+
+
+
+<section id="email">
+  <h2><span class="em">📩</span> Your email</h2>
+  <div class="card"><h3>Ask about your own inbox</h3>
+    <div class="ex">/mail did they ever reply about the contract?</div>
+    <div class="ex">check my email — what did I tell her about comp?</div>
+    <p><b>1:1 DM only.</b> Noto searches <b>your</b> mailbox (full threads, years back) and cites
+    dates + senders. Nobody can query anyone else's mailbox — not even admins.</p></div>
+  <div class="card"><h3>Auto-drafted replies — the review card</h3>
+    <p>When an email arrives with you in <b>To:</b> (never CC, never newsletters) and it needs an
+    answer, Noto drafts a reply and DMs you a card: what they wrote, the draft, and a confidence
+    score — <span class="pill g">🟢 85+ routine, safe to send</span>
+    <span class="pill o">🟡 60–84 worth a skim</span>
+    <span class="pill r">🔴 &lt;60 review carefully</span> — plus a “missing” line for anything
+    it couldn't know. For substantive emails Noto researches first: your past exchanges and the
+    company knowledge base — the note shows what it consulted.</p>
+    <ul>
+      <li><b>Send</b> — goes out exactly as shown: reply-all, inside the same thread, your signature.</li>
+      <li><b>Discard</b> — deletes the draft.</li>
+      <li><b>Edit</b> — opens Lark Mail; the draft is in your Drafts.</li>
+      <li><b>Or just reply to the card</b>: say <i>“send”</i> / <i>“discard”</i>, or describe a change —
+        <i>“shorter, and confirm Thursday”</i> — and Noto redoes the draft and sends a fresh card.</li>
+    </ul>
+    <p>Drafts follow the <b>house playbook</b> — how VP actually answers, mined nightly from the
+    team's sent mail — then your own voice on top. Facts Noto can't verify are never invented;
+    they go to the card note. <b>Nothing ever sends without your tap.</b></p></div>
+  <div class="card"><h3>The playbook (admins)</h3>
+    <p>Admin panel → <b>Playbook</b> tab: every learned response pattern with the exact exchange it
+    came from, and Keep / Retire controls. Quick look in chat: <b>/playbook</b>.</p></div>
+</section>
+
+<section id="talk">
+  <h2><span class="em">💬</span> Talking to Noto</h2>
+  <div class="card">
+    <ul>
+      <li><b>Reply = context.</b> Use Lark's Reply on any Noto message and your reply carries that
+        message as context — follow up on old answers days later, naturally.</li>
+      <li><b>Teach it:</b> start a message with <i>feedback:</i> or <i>remember this:</i> and it's
+        filed for the learning loop (admins review what becomes a standing rule).</li>
+      <li><b>Praise works:</b> 👍 on an answer saves the successful route for similar questions.</li>
+      <li><b>Redo drafts:</b> reply to a draft card with the change you want, or
+        <i>redo q#12: friendlier</i> from anywhere in the DM.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="auto">
+  <h2><span class="em">⚙️</span> What runs automatically</h2>
+  <div class="card">
+    <ul>
+      <li><b>Nightly comb (3:30am):</b> re-syncs wikis, docs and chats; refreshes indexes; mines chat Q&amp;A nuggets.</li>
+      <li><b>Morning reminders:</b> your task list, DM'd when it's 8am in <i>your</i> timezone.</li>
+      <li><b>Auto-drafts:</b> new To-addressed email checked every 5 minutes (mail users).</li>
+      <li><b>Playbook mining (1:30am):</b> distills more of the team's sent mail into the response playbook.</li>
+      <li><b>Expenses:</b> DM a receipt photo/file → logged to the reimbursement Base.
+        Screenshots of event invites → calendar entries (after your confirm).</li>
+    </ul>
+  </div>
+</section>
+
+<section id="commands">
+  <h2><span class="em">⌨️</span> Command reference</h2>
+  <div class="card"><table>
+    <tr><th>Command</th><th>What it does</th><th>Who</th></tr>
+    <tr><td>/help</td><td>Quick capability summary in chat</td><td>everyone</td></tr>
+    <tr><td>/instructions</td><td>Link to this manual</td><td>everyone</td></tr>
+    <tr><td>/mail &lt;question&gt;</td><td>Search your own mailbox (DM only)</td><td>mail users</td></tr>
+    <tr><td>/feedback …</td><td>File feedback (also “feedback: …”)</td><td>everyone</td></tr>
+    <tr><td>/nuggets</td><td>Review pending chat-knowledge nuggets</td><td>admins</td></tr>
+    <tr><td>/playbook</td><td>House email playbook — stats/show/search/disable</td><td>admins</td></tr>
+    <tr><td>/expense …</td><td>Log an expense by text</td><td>team</td></tr>
+    <tr><td>/login</td><td>Admin-panel magic link</td><td>panel users</td></tr>
+  </table></div>
+</section>
+
+<section id="limits">
+  <h2><span class="em">🔒</span> Privacy &amp; limitations — read this once</h2>
+  <div class="card">
+    <ul>
+      <li><b>Mailbox isolation is absolute.</b> Email answers and drafts only ever come from
+        <i>your own</i> mailbox, only in your 1:1 DM. No cross-mailbox queries, no exceptions.</li>
+      <li><b>Noto never deletes.</b> No document, file, message, record or wiki page — enforced in
+        code at startup. The single exception: its <i>own</i> mail drafts when you hit Discard.</li>
+      <li><b>Nothing sends itself.</b> Every email draft waits for your explicit Send.</li>
+      <li><b>Confidence is a triage hint, not a guarantee</b> — read 🟡 and 🔴 drafts before sending.
+        Sensitive topics (pricing, legal terms, rejections) are always capped orange on purpose.</li>
+      <li><b>Knowledge freshness:</b> docs/chats sync nightly (email every few minutes) — today's
+        brand-new doc may not be indexed until tomorrow morning.</li>
+      <li><b>Group-chat history</b> from before Noto joined a group is invisible to it.</li>
+      <li><b>Company data only.</b> Noto answers from indexed company knowledge; it doesn't browse
+        your personal accounts or invent facts — “I don't know” is a feature.</li>
+      <li><b>Email features require setup per user</b> — mailbox in the config + a one-click authorization.</li>
+    </ul>
+  </div>
+</section>
+
+<p class="foot">Noto Lark · internal · questions → your admin, or just ask the bot</p>
+</div>
+</body>
+</html>

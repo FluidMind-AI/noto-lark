@@ -72,7 +72,7 @@ def resolve_trust(sender_open_id: str,
 WRITE_COMMANDS = ("forget", "expense")
 READ_COMMANDS = ("help", "feedback-list", "feedback-show",
                  "feedback-stats", "login", "nuggets",
-                 "mail", "inbox", "playbook")
+                 "mail", "inbox", "playbook", "instructions", "manual")
 
 
 def parse_command(text: str) -> Optional[Tuple[str, str]]:
@@ -471,6 +471,8 @@ def _triage(text: str, sender_open_id: str, chat_id: str,
             return ("reply", _cmd_mail(args, sender_open_id, chat_type))
         if name == "playbook":
             return ("reply", _cmd_playbook(args, sender_open_id))
+        if name in ("instructions", "manual"):
+            return ("reply", _cmd_instructions())
         if name == "feedback-list":
             return ("reply", _cmd_feedback_list(args, trust))
         if name == "feedback-show":
@@ -664,6 +666,17 @@ def _cmd_mail(args: str, sender_open_id: str, chat_type: str) -> str:
               file=sys.stderr, flush=True)
         return ("Something went wrong searching your mailbox — "
                 "I've logged the error.")
+
+
+def _cmd_instructions() -> str:
+    """/instructions — link to the one-page manual served at /manual."""
+    host = (load_config().get("lark", {}) or {}).get("funnel_host", "")
+    if not host:
+        return ("The manual lives at https://<your-funnel-host>/manual — "
+                "set lark.funnel_host in lolabot.yaml to enable the link.")
+    return ("📖 **Instruction manual** — what I can do, how to use me, "
+            f"and my limits, on one page:\nhttps://{host}/manual\n\n"
+            "Quick chat version any time: `/help`.")
 
 
 def _cmd_playbook(args: str, sender_open_id: str) -> str:
@@ -1772,6 +1785,22 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True,
                               "service": "noto-lark-webhook",
                               "method_note": "POST for actual events"})
+            return
+        if path == "/manual":
+            try:
+                with open(os.path.join(get_home(), "docs",
+                                        "manual.html"), "rb") as f:
+                    body = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type",
+                                 "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except Exception as e:
+                print(f"[lark_bot] manual serve failed: {e}",
+                      file=sys.stderr, flush=True)
+                self._send(500, {"err": "manual unavailable"})
             return
         self._send(404, {"err": "not found"})
 
