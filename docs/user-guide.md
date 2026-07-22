@@ -151,3 +151,42 @@ Most things don't need a command — just ask in plain language.
 - **Click citations** before trusting an answer for anything important.
 - **React 👍** to answers you'd want repeated — you're training it.
 - **Correct it** when it's wrong ("feedback: …") — that's how it improves.
+
+## Your email, answered and drafted
+
+### Ask about your own inbox (`/mail`)
+In a **private 1:1 DM** with the bot: `/mail did they ever reply about
+the contract?` — or naturally: "check my email — what did I promise
+them?" The bot searches YOUR mailbox only (hybrid keyword + semantic
+search, whole threads), and answers with dates and senders cited.
+Nobody can query anyone else's mailbox — not even admins.
+
+### Auto-drafted replies (review cards)
+When an email arrives with you in the **To:** field (never CC, never
+lists) and it actually needs an answer, the bot drafts a reply and DMs
+you a **review card**: the subject, what they wrote, the draft, and a
+**confidence score** (green = routine, safe to send · orange = skim it ·
+red = needs your eyes) plus a "what's missing" note.
+
+Buttons: **Send** (goes out as-is — reply-all, inside the same thread,
+with your signature) · **Discard** (deletes the draft) · **Edit**
+(opens Lark Mail). Or just **reply to the card in chat**: say "send" or
+"discard", or describe any change ("shorter, and propose Tuesday") and
+the bot redoes the draft and sends a fresh card.
+
+Drafts follow the **house playbook** — response patterns mined nightly
+from the team's actual sent mail (how you chase, how you decline, how
+you negotiate) — then add your personal voice from your own past
+replies. Facts it can't verify are never invented; they go to the
+card's note instead.
+
+### The playbook (admins)
+`/playbook` in a DM shows the learned response patterns; the **admin
+panel → Playbook** tab is the full review seat — each entry with the
+exact email exchange it was mined from, and Keep / Retire controls.
+Retired entries stop influencing drafts immediately.
+
+### Replying to the bot = context
+Use Lark's **Reply** on any bot message and your reply carries that
+message as context — "and what about for the Berlin office?" continues
+that exact conversation, even days later or across bot restarts.

@@ -25,6 +25,7 @@ Token cache: lark/user_token.json (git-ignored).
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -66,6 +67,28 @@ NOAH_SCOPES = ("offline_access "
                "task:task:read task:task:write "
                "task:tasklist:read task:tasklist:write")
 
+# Per-user MAIL identities (auto-draft). Create Draft/Send are USER-token
+# APIs — the tenant token that reads mail via the admin data-range is
+# rejected for writes, so each mailbox owner authorizes once. Identities
+# are derived from config (mail.users.<slug> → identity "<slug>_mail");
+# EXPECTED_MAILBOX guards against authorizing under the wrong login.
+MAIL_DRAFT_SCOPES = ("offline_access mail:user_mailbox.message:modify "
+                     "mail:user_mailbox.message:send")
+
+
+def _mail_identities():
+    try:
+        users = (load_config().get("mail", {}) or {}).get("users", {}) or {}
+    except Exception:
+        users = {}
+    return {f"{slug}_mail": (u or {}).get("mailbox", "")
+            for slug, u in users.items()}
+
+
+def _expected_mailbox(ident):
+    return _mail_identities().get(ident, "")
+
+
 _SCOPES_BY_IDENTITY = {
     "operator": DEFAULT_SCOPES,
     "alejandro": DEFAULT_SCOPES,    # alias
@@ -77,15 +100,20 @@ def _resolve_identity(identity: Optional[str]) -> str:
     """Normalize identity name. Empty/None -> 'operator' (back-compat)."""
     if not identity:
         return "operator"
-    i = identity.strip().lower()
-    if i not in _SCOPES_BY_IDENTITY:
+    # Strip stray punctuation that rides in when the URL was pasted from
+    # markdown/chat (e.g. a trailing ')').
+    i = re.sub(r"[^a-z0-9_]", "", identity.strip().lower())
+    if i not in _SCOPES_BY_IDENTITY and i not in _mail_identities():
         raise ValueError(f"unknown OAuth identity {identity!r} — "
                          f"valid: {sorted(_SCOPES_BY_IDENTITY)}")
     return "operator" if i == "alejandro" else i
 
 
 def _scopes_for(identity: str) -> str:
-    return _SCOPES_BY_IDENTITY[_resolve_identity(identity)]
+    ident = _resolve_identity(identity)
+    if ident in _mail_identities():
+        return MAIL_DRAFT_SCOPES
+    return _SCOPES_BY_IDENTITY[ident]
 
 
 def _token_path(identity: Optional[str] = None) -> str:
@@ -218,6 +246,24 @@ def exchange_code(code: str,
         "code": code,
         "redirect_uri": _redirect_uri(),
     })
+    ident = _resolve_identity(identity)
+    # Wrong-account guard for mail identities: the token must belong to
+    # the mailbox it will draft into — refuse tokens minted under a
+    # different login instead of silently keeping them.
+    expected = _expected_mailbox(ident)
+    if expected:
+        req = urllib.request.Request(
+            f"{_base_url()}/open-apis/authen/v1/user_info",
+            headers={"Authorization": f"Bearer {payload['access_token']}"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            u = (json.loads(r.read()).get("data") or {})
+        actual = (u.get("enterprise_email") or u.get("email") or "").lower()
+        if actual != expected.lower():
+            raise RuntimeError(
+                f"OAuth account mismatch for {ident}: authorized as "
+                f"{actual or 'unknown'!r} but this identity drafts into "
+                f"{expected!r}. Log into Lark as {expected} and click the "
+                f"link again.")
     return _store(payload, identity=identity)
 
 
@@ -375,7 +421,8 @@ def refresh_all() -> Dict[str, Any]:
     Wraps refresh_now() per identity so one failure doesn't block the
     others. Returns {<identity>: result-or-error}."""
     out: Dict[str, Any] = {}
-    for ident in ("operator", "noah"):
+    idents = set(_SCOPES_BY_IDENTITY) | set(_mail_identities())
+    for ident in sorted(idents - {"alejandro"}):
         if not os.path.exists(_token_path(ident)):
             continue
         try:

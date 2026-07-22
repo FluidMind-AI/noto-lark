@@ -338,3 +338,68 @@ refresher keeps them alive afterward).
 with `{"task": {"completed_at": "<ms>"}, "update_fields":
 ["completed_at"]}`; `"0"` un-completes. Nothing here needs a delete
 call, which keeps the module clean under the #19 delete-scan.
+
+## Lark Mail API (the email-stack port, 2026-07)
+
+**List messages: `page_size` max is 20** — 50+ returns 99992402 "field
+validation failed". A `label_id` (INBOX/SENT/DRAFT/SPAM…) is REQUIRED —
+omitting it is code 4039, not a permission error.
+
+**The list endpoint returns bare message-ID strings, not objects.**
+Every field (subject, recipients, thread_id, body) needs a per-message
+GET. Budget one call per message when planning a backfill.
+
+**Freshly delivered messages 400/come back empty for ~1–3 minutes**
+while Lark indexes them. Retry with backoff before degrading — a reply
+built during that window silently loses its threading headers.
+
+**Bodies are URL-safe base64** (`-`/`_`). `base64.b64decode` throws
+"Incorrect padding" — always `urlsafe_b64decode` (+ re-pad).
+
+**Create Draft takes ONLY `{"raw": <base64url RFC-5822 EML>}`.**
+Structured fields (subject/to/body_html — the shapes Send Message
+accepts) return 1234008. Build with `email.message.EmailMessage` →
+`urlsafe_b64encode(msg.as_bytes())`.
+
+**Reading mail ≠ writing mail.** Tenant token + admin data-range covers
+READS of any included mailbox. Draft-create and send are USER-token
+APIs — the tenant token is rejected outright (99991663), and each
+mailbox owner must OAuth individually (`mail:user_mailbox.message:modify`
+for drafts, `:send` for sending). A token never gains scopes on refresh —
+scope additions require a fresh authorization click.
+
+**Lark's conversation grouping IGNORES RFC threading headers on
+API-sent mail.** A raw send with perfect In-Reply-To/References still
+forks a NEW thread_id — recipients inside Lark Mail see the original as
+unanswered (external Outlook/Gmail recipients thread fine). THE FIX:
+the undocumented **`POST /mail/v1/user_mailboxes/me/messages/{id}/reply
+{"raw": …}`** endpoint — it sends within the ORIGINAL conversation and
+returns that thread_id. Each mailbox has its own thread_id for the same
+conversation.
+
+**Interactive-card messages return only a stub via the IM get-message
+API** — `body.content` for a CardKit card is roughly the title, not the
+rendered text. If you need "what did the bot say in that message" (e.g.
+resolving a reply's parent), record your own message_id→text mapping at
+send time; the API alone cannot give it back.
+
+**Attachment downloads:** GET `…/messages/{id}/attachments/download_url
+?attachment_ids=…` → short-lived URLs (2h, two uses). Inline signature
+images arrive as `cid:` attachments with `is_inline: true`.
+
+**Mail apps in the client:** `https://applink.larksuite.com/client/mail/home`
+opens Lark Mail INSIDE the app; plain web URLs kick users to the browser.
+No per-draft/per-message deep link exists.
+
+## launchd on a Mac mini agent box
+
+**System sleep silently eats StartCalendarInterval jobs** — a sleeping
+Mac skips the fire time and (in practice) does NOT reliably run missed
+user agents on wake. If overnight jobs matter, keep the box awake with a
+KeepAlive'd `caffeinate -s -i` launch agent. Sleep/half-wake states also
+explain "Errno 49 Can't assign requested address" network failures in
+early-morning jobs.
+
+**Apple's rsync (openrsync) accepts `--chmod` and silently ignores it** —
+files land with source permissions. Fix perms server-side (forced
+command) or use real rsync.

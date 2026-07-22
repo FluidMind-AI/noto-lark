@@ -519,6 +519,10 @@ def _inbox_counts(p: Principal) -> Response:
         "feedback": _count("feedback.db",
                            "SELECT COUNT(*) FROM feedback "
                            "WHERE status='unresolved'"),
+        "playbook": _count("email_playbook.db",
+                           "SELECT COUNT(*) FROM entries WHERE "
+                           "status='active' AND (reviewed_at IS NULL "
+                           "OR reviewed_at='')") or 0,
         "nuggets": _count("chat_nuggets.db",
                           "SELECT COUNT(*) FROM chat_nuggets "
                           "WHERE status='pending'"),
@@ -919,6 +923,129 @@ def _nugget_dismiss(p: Principal, nid: int, body: bytes) -> Response:
 # (CAS, audit columns, routing) holds; returns per-item outcomes.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Playbook — the house email-response playbook (email_playbook.py), mined
+# nightly from the principals' sent mail; ACTIVE entries are canon for the
+# auto-drafter. This is the review seat (operator ask 2026-07-23): keep /
+# retire each entry, with full provenance — the exact email exchange the
+# entry was mined from, so reviewers see HOW Noto reached the conclusion.
+# ---------------------------------------------------------------------------
+
+def _pb_conn():
+    import email_playbook
+    conn = email_playbook._connect()
+    for ddl in ("ALTER TABLE entries ADD COLUMN reviewed_at TEXT",
+                "ALTER TABLE entries ADD COLUMN reviewed_by TEXT"):
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass
+    return conn
+
+
+def _playbook_list(p: Principal, query: Dict[str, str]) -> Response:
+    import email_playbook
+    status = query.get("status", "active")
+    conn = _pb_conn()
+    try:
+        sql = "SELECT * FROM entries"
+        where, args = [], []
+        if status == "unreviewed":
+            where.append("status='active' AND (reviewed_at IS NULL"
+                         " OR reviewed_at='')")
+        elif status != "all":
+            where.append("status=?")
+            args.append(status)
+        if query.get("type"):
+            where.append("situation_type=?")
+            args.append(query["type"])
+        if query.get("source"):
+            where.append("source_user=?")
+            args.append(query["source"])
+        if query.get("q"):
+            like = f"%{query['q']}%"
+            where.append("(situation LIKE ? OR approach LIKE ?"
+                         " OR exemplar LIKE ?)")
+            args += [like, like, like]
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(min(int(query.get("limit", "100") or 100), 300))
+        rows = [dict(r) for r in conn.execute(sql, args)]
+        for r in rows:
+            r["exemplar"] = (r.get("exemplar") or "")[:1600]
+    finally:
+        conn.close()
+    return _json_resp(200, {"ok": True, "entries": rows,
+                            "stats": email_playbook.stats()})
+
+
+def _playbook_provenance(p: Principal, eid: int) -> Response:
+    """HOW the entry was concluded: the mined SENT reply + the inbound it
+    answered, pulled live from the source user's mail mirror."""
+    conn = _pb_conn()
+    try:
+        e = conn.execute("SELECT * FROM entries WHERE id=?",
+                         (eid,)).fetchone()
+    finally:
+        conn.close()
+    if not e:
+        return _err(404, f"no playbook entry #{eid}")
+    e = dict(e)
+    out = {"ok": True, "entry": e, "sent": None, "inbound": None}
+    try:
+        import mail_store
+        mc = mail_store._connect(e["source_user"])
+        s = mc.execute("SELECT thread_id, date_ms, subject, body_plain"
+                       " FROM messages WHERE msg_id=?",
+                       (e["source_msg_id"],)).fetchone()
+        if s:
+            out["sent"] = {"subject": s["subject"],
+                           "body": (s["body_plain"] or "")[:3000]}
+            i = mc.execute(
+                "SELECT from_email, from_name, body_plain FROM messages"
+                " WHERE thread_id=? AND label='INBOX' AND date_ms<?"
+                " ORDER BY date_ms DESC LIMIT 1",
+                (s["thread_id"], s["date_ms"] or 0)).fetchone()
+            if i:
+                out["inbound"] = {"from": i["from_email"],
+                                  "from_name": i["from_name"],
+                                  "body": (i["body_plain"] or "")[:2400]}
+        mc.close()
+    except Exception as ex:
+        out["provenance_error"] = str(ex)[:200]
+    return _json_resp(200, out)
+
+
+def _playbook_set(p: Principal, eid: int, body: bytes,
+                  new_status: str) -> Response:
+    data = _parse_body(body)
+    from datetime import datetime as _dt
+    now = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = _pb_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE entries SET status=?, reviewed_at=?, reviewed_by=?"
+            " WHERE id=?", (new_status, now, p.name or p.open_id, eid))
+        conn.commit()
+        ok = cur.rowcount > 0
+    finally:
+        conn.close()
+    _audit(p.open_id, p.name, f"playbook.{new_status}", str(eid),
+           {k: v for k, v in data.items() if k != "_csrf"},
+           {"ok": ok})
+    return _json_resp(200 if ok else 404,
+                      {"ok": ok, "id": eid, "status": new_status})
+
+
+def _playbook_keep(p: Principal, eid: int, body: bytes) -> Response:
+    return _playbook_set(p, eid, body, "active")
+
+
+def _playbook_disable(p: Principal, eid: int, body: bytes) -> Response:
+    return _playbook_set(p, eid, body, "disabled")
+
+
 _BATCH_ACTIONS = {
     "rules.approve": lambda p, i, params: _rule_approve(p, i, params),
     "rules.reject": lambda p, i, params: _rule_reject(p, i, params),
@@ -927,6 +1054,8 @@ _BATCH_ACTIONS = {
     "feedback.reject": lambda p, i, params: _feedback_reject(p, i, params),
     "nuggets.approve": lambda p, i, params: _nugget_approve(p, i, params),
     "nuggets.dismiss": lambda p, i, params: _nugget_dismiss(p, i, params),
+    "playbook.keep": lambda p, i, params: _playbook_keep(p, i, params),
+    "playbook.disable": lambda p, i, params: _playbook_disable(p, i, params),
 }
 
 
@@ -1439,6 +1568,15 @@ def handle(method: str, path: str, query: Dict[str, str],
     m = re.fullmatch(r"/admin/api/rules/(\d+)/evidence", path)
     if m and method == "GET":
         return _rule_evidence(p, int(m.group(1)))
+    if method == "GET" and path == "/admin/api/playbook":
+        return _playbook_list(p, query)
+    m = re.fullmatch(r"/admin/api/playbook/(\d+)/provenance", path)
+    if m and method == "GET":
+        return _playbook_provenance(p, int(m.group(1)))
+    m = re.fullmatch(r"/admin/api/playbook/(\d+)/(keep|disable)", path)
+    if m and method == "POST":
+        fn = _playbook_keep if m.group(2) == "keep" else _playbook_disable
+        return fn(p, int(m.group(1)), body)
     if method == "GET" and path == "/admin/api/nuggets":
         return _nuggets_list(p, query)
     if method == "GET" and path == "/admin/api/health":

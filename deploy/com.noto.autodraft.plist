@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.noto.autodraft</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>/PATH/TO/noto-lark/tools/autodraft-poll.sh</string></array>
+  <key>WorkingDirectory</key><string>/PATH/TO/noto-lark</string>
+  <key>EnvironmentVariables</key><dict><key>LOLABOT_HOME</key><string>/PATH/TO/noto-lark</string></dict>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>/PATH/TO/noto-lark/lark/autodraftpoll.out.log</string>
+  <key>StandardErrorPath</key><string>/PATH/TO/noto-lark/lark/autodraftpoll.err.log</string>
+</dict></plist>

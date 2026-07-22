@@ -151,6 +151,7 @@ const ICONS = {
   inbox: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z"/></svg>',
   health: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
   usecases: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+  playbook: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
   admin: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
 };
 
@@ -178,6 +179,11 @@ const VIEWS = {
   health: {
     title: "Health", icon: "health", key: "h",
     render: (el) => renderHealth(el),
+  },
+  playbook: {
+    title: "Playbook", icon: "playbook", key: "b",
+    badge: () => state.counts.playbook ?? 0,
+    render: (el) => renderPlaybook(el),
   },
   admin: {
     title: "Admin", icon: "admin", key: "a", superOnly: true,
@@ -241,7 +247,123 @@ function renderLogin() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key: $("#key").value }) });
       const d = await r.json();
-      if (r.ok && d.ok) { boot(); }
+      if (r.ok && d.ok) { /* ── Playbook: the house email-response playbook review seat ──────── */
+function renderPlaybook(el) {
+  el.appendChild(h(`<div class="page-head">
+    <h1>Playbook</h1>
+    <span class="sub">how VP answers emails — mined nightly from sent mail; active entries are canon for auto-drafts</span>
+  </div>`));
+  const bar = h(`<div class="panel" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+    <select id="pb-status">
+      <option value="unreviewed">Unreviewed</option>
+      <option value="active">Active (all)</option>
+      <option value="disabled">Retired</option>
+      <option value="all">Everything</option>
+    </select>
+    <select id="pb-type"><option value="">All situations</option></select>
+    <select id="pb-source"><option value="">All sources</option></select>
+    <input id="pb-q" placeholder="search…" style="flex:1;min-width:140px">
+    <span id="pb-count" class="sub"></span>
+  </div>`);
+  el.appendChild(bar);
+  const root = h('<div><div class="empty-state"><span class="spin"></span></div></div>');
+  el.appendChild(root);
+
+  async function load() {
+    const q = new URLSearchParams();
+    q.set("status", bar.querySelector("#pb-status").value);
+    const t = bar.querySelector("#pb-type").value; if (t) q.set("type", t);
+    const src = bar.querySelector("#pb-source").value; if (src) q.set("source", src);
+    const s = bar.querySelector("#pb-q").value.trim(); if (s) q.set("q", s);
+    let d;
+    try { d = await api("/admin/api/playbook?" + q.toString()); }
+    catch (e) { notify(e.message, "bad", 5000); return; }
+    const typeSel = bar.querySelector("#pb-type");
+    if (typeSel.options.length <= 1 && d.stats?.by_type) {
+      Object.entries(d.stats.by_type).forEach(([ty, n]) =>
+        typeSel.appendChild(h(`<option value="${ty}">${ty} (${n})</option>`)));
+    }
+    const srcSel = bar.querySelector("#pb-source");
+    if (srcSel.options.length <= 1 && d.stats?.by_user) {
+      Object.keys(d.stats.by_user).forEach(u =>
+        srcSel.appendChild(h(`<option value="${u}">${u}</option>`)));
+    }
+    bar.querySelector("#pb-count").textContent =
+      `${(d.entries || []).length} shown · ${d.stats?.entries ?? "?"} total`;
+    if (!(d.entries || []).length) {
+      root.replaceChildren(h(`<div class="panel"><div class="empty-state">
+        <div class="big">◌</div><div><b>Nothing here.</b></div>
+        <div style="margin-top:6px">The nightly miner adds entries at 01:30 —
+        or switch the filter above.</div></div></div>`));
+      return;
+    }
+    root.replaceChildren(...d.entries.map(card));
+  }
+
+  function card(e) {
+    const conf = e.status === "active"
+      ? (e.reviewed_at ? `<span class="count">kept ${e.reviewed_at.slice(0,10)}</span>` : "")
+      : `<span class="count hot">retired</span>`;
+    const c = h(`<div class="panel" style="margin-bottom:10px">
+      <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
+        <b>#${e.id}</b>
+        <span class="count">${e.situation_type}</span>
+        <span class="sub">${e.source_user} · ${e.sent_date || "?"} · authority ${e.authority}</span>
+        ${conf}
+      </div>
+      <div style="margin:8px 0 4px"><b>Situation:</b> ${esc(e.situation)}</div>
+      <div style="margin:4px 0"><b>Approach:</b> ${esc(e.approach)}</div>
+      <div style="margin:4px 0" class="sub"><b>Tone:</b> ${esc(e.tone || "—")}</div>
+      <details style="margin:6px 0"><summary>Exemplar (the actual reply)</summary>
+        <pre style="white-space:pre-wrap;font-size:12px;margin:6px 0">${esc(e.exemplar || "")}</pre></details>
+      <details class="pb-prov" style="margin:6px 0"><summary>Provenance — the exchange it was mined from</summary>
+        <div class="pb-prov-body sub">loading…</div></details>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn pb-keep">✓ Keep</button>
+        <button class="btn danger pb-disable">Retire</button>
+      </div>
+    </div>`);
+    c.querySelector(".pb-prov").addEventListener("toggle", async (ev) => {
+      const box = c.querySelector(".pb-prov-body");
+      if (!ev.target.open || box.dataset.loaded) return;
+      try {
+        const d = await api(`/admin/api/playbook/${e.id}/provenance`);
+        box.dataset.loaded = "1";
+        box.replaceChildren(h(`<div>
+          <div style="margin:6px 0"><b>They wrote${d.inbound ? " (" + esc(d.inbound.from || "") + ")" : ""}:</b>
+            <pre style="white-space:pre-wrap;font-size:12px">${esc(d.inbound?.body || "(no inbound found — outbound-initiated)")}</pre></div>
+          <div style="margin:6px 0"><b>${esc(e.source_user)} replied:</b>
+            <pre style="white-space:pre-wrap;font-size:12px">${esc(d.sent?.body || "(not in the mirror)")}</pre></div>
+          <div class="sub">Noto read this exchange and distilled the Situation/Approach/Tone above; the reply itself became the exemplar.</div>
+        </div>`));
+      } catch (err) { box.textContent = "provenance failed: " + err.message; }
+    });
+    c.querySelector(".pb-keep").onclick = () =>
+      act(e.id, "keep", `#${e.id} kept as canon`);
+    c.querySelector(".pb-disable").onclick = () =>
+      act(e.id, "disable", `#${e.id} retired from drafting`);
+    async function act(id, what, label) {
+      try {
+        await api(`/admin/api/playbook/${id}/${what}`, { method: "POST", body: {} });
+        notify(label, "ok");
+        load();
+      } catch (err) { notify(err.message, "bad", 5000); }
+    }
+    return c;
+  }
+
+  function esc(t) {
+    return String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+  ["#pb-status", "#pb-type", "#pb-source"].forEach(sel =>
+    bar.querySelector(sel).onchange = load);
+  let deb;
+  bar.querySelector("#pb-q").oninput = () => { clearTimeout(deb); deb = setTimeout(load, 350); };
+  load();
+}
+
+boot(); }
       else { msg.textContent = d.error || "Invalid key."; msg.className = "login-msg bad"; }
     } catch (e) { msg.textContent = String(e); msg.className = "login-msg bad"; }
   };

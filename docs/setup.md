@@ -413,3 +413,38 @@ add the scopes — see step 9, again.
 
 When something breaks, read `docs/gotchas.md` before debugging — the
 odds your problem is already in there are excellent.
+
+## Mail intelligence (per-user inbox Q&A, playbook, auto-draft)
+
+Config (`lolabot.yaml`):
+
+```yaml
+mail:
+  internal_domain: "@yourco.com"     # colleagues' domain (optional)
+  users:                             # each mail-enabled user
+    alice:
+      mailbox: alice@yourco.com      # tenant mailbox address
+      open_id: ou_xxx                # their Lark open_id (DM target + owner gate)
+      authority: 1.0                 # playbook exemplar weight (default 1.0)
+  signature:                         # house signature template fields
+    company_name: "Your Co"
+    site_url: "https://yourco.com/"
+    site_label: "www.yourco.com"
+    linkedin_url: "https://www.linkedin.com/company/yourco/"
+    logo_path: "indexes/mail/assets/logo.png"   # optional inline logo
+agent:
+  company_name: "Your Co"            # used in drafting prompts
+```
+
+Access model (two layers, discovered the hard way — see gotchas):
+1. **Read** = tenant token + admin data-range: Console → "Accessible data
+   range → Email Message" must include each mailbox.
+2. **Write (drafts/send)** = each user's own OAuth: send them
+   `lark_oauth.authorize_url("<slug>_mail")` — one click. Scopes:
+   `mail:user_mailbox.message:modify` + `:send` must be on the app first.
+
+Pipelines: `tools/mail-nightly.sh` (sync → vectors → playbook mining,
+schedule via `deploy/com.noto.mailnightly.plist`), `tools/autodraft-poll.sh`
+(every 15 min: new To-addressed mail → review card with Send/Discard/Edit).
+Keep the host awake: `deploy/com.noto.caffeinate.plist` — sleeping Macs
+skip calendar jobs.

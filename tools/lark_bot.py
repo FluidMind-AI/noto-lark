@@ -26,6 +26,7 @@ import json
 import os
 import queue
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -70,7 +71,8 @@ def resolve_trust(sender_open_id: str,
 
 WRITE_COMMANDS = ("forget", "expense")
 READ_COMMANDS = ("help", "feedback-list", "feedback-show",
-                 "feedback-stats", "login", "nuggets")
+                 "feedback-stats", "login", "nuggets",
+                 "mail", "inbox", "playbook")
 
 
 def parse_command(text: str) -> Optional[Tuple[str, str]]:
@@ -126,29 +128,150 @@ _HISTORY_MAX = 12
 # _answer_question used to append directly; we centralise here so the
 # LLM router sees the same view every path produces.
 
+_CTX_DB = os.path.join(get_home(), "indexes", "chat_context.db")
+
+
+def _ctx_conn():
+    conn = sqlite3.connect(_CTX_DB)
+    conn.execute("PRAGMA busy_timeout=8000")
+    conn.execute("CREATE TABLE IF NOT EXISTS turns ("
+                 " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                 " chat_id TEXT NOT NULL, role TEXT NOT NULL,"
+                 " text TEXT NOT NULL, ts REAL NOT NULL,"
+                 " msg_id TEXT DEFAULT '')")
+    try:
+        conn.execute("ALTER TABLE turns ADD COLUMN msg_id TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_turns_chat"
+                 " ON turns(chat_id, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_turns_msg"
+                 " ON turns(msg_id)")
+    return conn
+
+
+def _history(chat_id: str) -> list:
+    """Rolling context — memory first, rehydrated from the persistent
+    store after a restart (restarts must not amnesia-wipe chats)."""
+    if chat_id in _CHAT_HISTORY:
+        return _CHAT_HISTORY[chat_id]
+    rows: list = []
+    try:
+        conn = _ctx_conn()
+        rows = [(r[0], r[1]) for r in reversed(conn.execute(
+            "SELECT role, text FROM turns WHERE chat_id=?"
+            " ORDER BY id DESC LIMIT ?",
+            (chat_id, _HISTORY_MAX)).fetchall())]
+        conn.close()
+    except Exception as e:
+        print(f"[lark_bot] history rehydrate failed: {e}",
+              file=sys.stderr, flush=True)
+    _CHAT_HISTORY[chat_id] = rows
+    return rows
+
+
+def _record_turn(chat_id: str, role: str, text: str,
+                 msg_id: str = "") -> None:
+    if not chat_id or not text:
+        return
+    h = _history(chat_id)
+    h.append((role, text))
+    if len(h) > _HISTORY_MAX:
+        del h[:-_HISTORY_MAX]
+    try:
+        conn = _ctx_conn()
+        conn.execute("INSERT INTO turns (chat_id, role, text, ts, msg_id)"
+                     " VALUES (?,?,?,?,?)",
+                     (chat_id, role, text[:4000], time.time(),
+                      msg_id or ""))
+        conn.execute("DELETE FROM turns WHERE chat_id=? AND id NOT IN"
+                     " (SELECT id FROM turns WHERE chat_id=?"
+                     "  ORDER BY id DESC LIMIT 60)", (chat_id, chat_id))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[lark_bot] history persist failed: {e}",
+              file=sys.stderr, flush=True)
+
+
 def _record_user(chat_id: str, text: str) -> None:
-    if not chat_id or not text:
-        return
-    h = _CHAT_HISTORY.setdefault(chat_id, [])
-    h.append(("user", text))
-    if len(h) > _HISTORY_MAX:
-        del h[:-_HISTORY_MAX]
+    _record_turn(chat_id, "user", text)
 
 
-def _record_bot(chat_id: str, text: str) -> None:
-    if not chat_id or not text:
-        return
-    h = _CHAT_HISTORY.setdefault(chat_id, [])
-    h.append(("noto", text))
-    if len(h) > _HISTORY_MAX:
-        del h[:-_HISTORY_MAX]
+def _record_bot(chat_id: str, text: str, msg_id: str = "") -> None:
+    _record_turn(chat_id, "noto", text, msg_id=msg_id)
+
+
+def _text_for_msgid(message_id: str) -> str:
+    """Exact parent text from our own turns — covers card messages whose
+    IM-API body is only a stub."""
+    if not message_id:
+        return ""
+    try:
+        conn = _ctx_conn()
+        r = conn.execute("SELECT text FROM turns WHERE msg_id=?"
+                         " ORDER BY id DESC LIMIT 1",
+                         (message_id,)).fetchone()
+        conn.close()
+        return r[0] if r else ""
+    except Exception:
+        return ""
+
+
+def _fetch_message_text(message_id: str) -> str:
+    """Resolve the ACTUAL replied-to message by id via the IM API.
+    Returns plain-ish text ('' on failure; interactive cards return only
+    a stub — prefer _text_for_msgid)."""
+    if not message_id:
+        return ""
+    try:
+        from lark_client import get_tenant_access_token
+        import urllib.request as _ur
+        req = _ur.Request(
+            f"https://open.larksuite.com/open-apis/im/v1/messages/"
+            f"{message_id}",
+            headers={"Authorization":
+                     f"Bearer {get_tenant_access_token()}"})
+        with _ur.urlopen(req, timeout=10) as r:
+            items = (json.loads(r.read()).get("data") or {}).get("items")                 or []
+        if not items:
+            return ""
+        m = items[0]
+        content = (m.get("body") or {}).get("content") or ""
+        if m.get("msg_type") == "text":
+            try:
+                return (json.loads(content).get("text") or "").strip()
+            except Exception:
+                return content[:1000]
+        try:
+            blob = json.loads(content)
+        except Exception:
+            return content[:1000]
+        texts: list = []
+
+        def walk(node):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if k in ("text", "content", "title") and                             isinstance(v, str):
+                        texts.append(v)
+                    else:
+                        walk(v)
+            elif isinstance(node, list):
+                for x in node:
+                    walk(x)
+        walk(blob)
+        return " ".join(t for t in texts if t)[:1500]
+    except Exception as e:
+        print(f"[lark_bot] parent fetch failed ({message_id[:18]}): {e}",
+              file=sys.stderr, flush=True)
+        return ""
 
 
 def _last_bot_message(chat_id: str) -> str:
     """The most recent thing the bot said in this chat — used as a
     best-effort 'what was the user replying to?' signal when Lark
     sends a parent_id but we don't track message_ids."""
-    for r, t in reversed(_CHAT_HISTORY.get(chat_id, [])):
+    for r, t in reversed(_history(chat_id)):
         if r == "noto":
             return t
     return ""
@@ -259,7 +382,8 @@ def _cmd_login(sender_open_id: str) -> str:
 
 
 def _triage(text: str, sender_open_id: str, chat_id: str,
-            trust: str, parent_text: str = "") -> Tuple[str, str]:
+            trust: str, parent_text: str = "",
+            chat_type: str = "") -> Tuple[str, str]:
     """Resolve an inbound message to a routing decision.
 
     Returns one of:
@@ -293,6 +417,32 @@ def _triage(text: str, sender_open_id: str, chat_id: str,
             "any nuggets to review")):
         return ("reply", _cmd_nuggets("queue", sender_open_id))
 
+    # Auto-draft REDO: "redo q#8: shorter". DM-only; ownership verified
+    # inside redo_draft.
+    _redo = re.match(r"redo\s*q?#?(\d+)\s*[:,\-—]?\s*(.*)", q.strip(),
+                     re.I | re.S)
+    if _redo and (chat_type or "").lower() == "p2p":
+        instruction = _redo.group(2).strip()
+        if not instruction:
+            return ("reply", "Tell me how to change it — e.g. "
+                    f"`redo q#{_redo.group(1)}: shorter, friendlier`.")
+        try:
+            from email_autodraft import redo_draft
+            return ("reply", redo_draft(int(_redo.group(1)), instruction,
+                                        sender_open_id))
+        except Exception as e:
+            print(f"[lark_bot] redo failed: {e}", file=sys.stderr,
+                  flush=True)
+            return ("reply", "Redo hit an error — I've logged it.")
+
+    # Personal-inbox Q&A NL: must reference the asker's OWN mail; gated
+    # hard inside _cmd_mail (owner + p2p only).
+    if any(pfx in _q_low for pfx in (
+            "my email", "my emails", "my inbox", "my mailbox",
+            "my sent mail", "did i reply", "did i email",
+            "did i ever send", "in my mail", "search my mail")):
+        return ("reply", _cmd_mail(q, sender_open_id, chat_type))
+
     cmd = parse_command(q)
     if cmd:
         name, args = cmd
@@ -317,6 +467,10 @@ def _triage(text: str, sender_open_id: str, chat_id: str,
                     "remembered about you.")
         if name == "nuggets":
             return ("reply", _cmd_nuggets(args, sender_open_id))
+        if name in ("mail", "inbox"):
+            return ("reply", _cmd_mail(args, sender_open_id, chat_type))
+        if name == "playbook":
+            return ("reply", _cmd_playbook(args, sender_open_id))
         if name == "feedback-list":
             return ("reply", _cmd_feedback_list(args, trust))
         if name == "feedback-show":
@@ -424,7 +578,8 @@ def _answer_question(q: str, history: list, chat_id: str,
 
     # User turn is already recorded by _worker before _triage runs.
     # Record only the bot's answer here so we don't duplicate the user.
-    _record_bot(chat_id, answer)
+    _record_bot(chat_id, answer,
+                msg_id=(getattr(card, 'message_id', '') or ''))
     # Remember this Q&A so a follow-up thumbs-up (text praise OR a
     # 👍 reaction on the answer card) can save it as a retrieval
     # recipe (praise = signal of what worked; recipes are injected
@@ -470,7 +625,7 @@ def handle_message(text: str, sender_open_id: str, chat_id: str,
     kind, val = _triage(text, sender_open_id, chat_id, trust)
     if kind == "reply":
         return val
-    return _answer_question(val, _CHAT_HISTORY.get(chat_id, []), chat_id)
+    return _answer_question(val, _history(chat_id), chat_id)
 
 
 # ---------------------------------------------------------------------------
@@ -479,6 +634,93 @@ def handle_message(text: str, sender_open_id: str, chat_id: str,
 # answerer, or conflicts between two authoritative answers) lands in
 # `pending` for an admin to approve, edit, or dismiss here.
 # ---------------------------------------------------------------------------
+
+def _cmd_mail(args: str, sender_open_id: str, chat_type: str) -> str:
+    """Answer a question from the asker's OWN mailbox. HARD PRIVACY
+    GATE: mailbox slug comes ONLY from mail_retrieval.user_for_asker()
+    — a 1:1 DM from the mailbox owner; group chats and other askers are
+    refused. No operator override."""
+    try:
+        from mail_retrieval import user_for_asker, answer
+    except Exception as e:
+        print(f"[lark_bot] /mail import failed: {e}",
+              file=sys.stderr, flush=True)
+        return "The mail index isn't available right now."
+    user = user_for_asker(sender_open_id, chat_type)
+    if user is None:
+        if (chat_type or "").lower() != "p2p":
+            return ("🔒 I only answer mailbox questions in a private 1:1 "
+                    "DM with the mailbox owner — ask me there.")
+        return ("Your mailbox isn't connected. Ask an admin to add you "
+                "to mail.users in the config (+ tenant data-range).")
+    q = (args or "").strip()
+    if not q:
+        return ("Ask me anything about your own email, e.g. "
+                "`/mail did they ever reply about the contract?`")
+    try:
+        return answer(user, q)
+    except Exception as e:
+        print(f"[lark_bot] /mail answer failed ({user}): {e}",
+              file=sys.stderr, flush=True)
+        return ("Something went wrong searching your mailbox — "
+                "I've logged the error.")
+
+
+def _cmd_playbook(args: str, sender_open_id: str) -> str:
+    """`/playbook` — review the house email-response playbook (admins).
+    Exemplars are real sent replies → admin-only."""
+    try:
+        from feedback_capture import admin_ids
+        if sender_open_id not in admin_ids():
+            return "The playbook is admin-only."
+    except Exception:
+        return "The playbook is admin-only."
+    import email_playbook as pb
+    parts = args.split(None, 1)
+    sub = (parts[0] if parts else "").lower()
+    rest = parts[1].strip() if len(parts) > 1 else ""
+    if not sub or sub == "stats":
+        st = pb.stats()
+        types = "\n".join(f"  · {t}: {n}" for t, n in
+                          list(st["by_type"].items())[:12])
+        return (f"**House email playbook** — {st['entries']} entries\n"
+                f"By source: {st['by_user']}\n"
+                f"Mining verdicts: {st['verdicts']}\n{types}\n\n"
+                "`/playbook show <id>` · `/playbook search <q>` · "
+                "`/playbook disable <id>`")
+    if sub == "show" and rest.isdigit():
+        conn = pb._connect()
+        r = conn.execute("SELECT * FROM entries WHERE id=?",
+                         (int(rest),)).fetchone()
+        conn.close()
+        if not r:
+            return f"No playbook entry #{rest}."
+        r = dict(r)
+        return (f"**#{r['id']} [{r['situation_type']}]** "
+                f"({r['source_user']}, {r['sent_date']}, {r['status']})\n"
+                f"**Situation:** {r['situation']}\n"
+                f"**Approach:** {r['approach']}\n"
+                f"**Tone:** {r['tone']}\n"
+                f"**Exemplar:**\n{(r['exemplar'] or '')[:900]}")
+    if sub == "search" and rest:
+        hits = pb.search(rest, k=6)
+        if not hits:
+            return f"No playbook entries match “{rest}”."
+        return "\n".join(
+            f"· **#{h['id']}** [{h['situation_type']}] ({h['source_user']}) "
+            f"{h['situation'][:90]}" for h in hits) + \
+            "\n\n`/playbook show <id>` for full detail."
+    if sub == "disable" and rest.isdigit():
+        conn = pb._connect()
+        n = conn.execute("UPDATE entries SET status='disabled' WHERE id=?"
+                         " AND status='active'", (int(rest),)).rowcount
+        conn.commit()
+        conn.close()
+        return (f"Entry #{rest} disabled — drafting won't use it."
+                if n else f"#{rest} not found or already disabled.")
+    return ("Usage: `/playbook` · `/playbook show <id>` · "
+            "`/playbook search <q>` · `/playbook disable <id>`")
+
 
 def _cmd_nuggets(args: str, sender_open_id: str = "") -> str:
     """Dispatch `/nuggets …`:
@@ -1024,6 +1266,22 @@ def _worker():
             _write_bot_stats()
         except Exception:
             pass
+        if job.get("type") == "autodraft_click":
+            try:
+                ev = job["ev"]
+                act = job["action"]
+                clicker = ((ev.get("operator") or {}).get("open_id") or "")
+                import autodraft_card
+                outcome = autodraft_card.handle_click(
+                    int(act.get("qid") or 0), act.get("action") or "",
+                    clicker, _display_name(clicker))
+                print(f"[lark_bot] autodraft q{act.get('qid')} "
+                      f"{act.get('action')} → {outcome}",
+                      file=sys.stderr, flush=True)
+            except Exception as e:
+                print(f"[lark_bot] autodraft click job failed: {e}",
+                      file=sys.stderr, flush=True)
+            continue
         chat_id = job.get("chat_id", "")
         card = None
         try:
@@ -1099,19 +1357,77 @@ def _worker():
                                 att["file_key"], att.get("file_name", ""),
                                 att.get("msg_type", "file"))
                         if reply:
-                            client.send_text(chat_id, reply)
-                            _record_bot(chat_id, reply)
+                            mid_ = client.send_text(chat_id, reply)
+                            _record_bot(chat_id, reply, msg_id=mid_ or '')
                     except Exception as e:
                         print(f"[lark_bot] attachment handling failed: "
                               f"{e}", file=sys.stderr, flush=True)
                 continue
-            # Parent_text resolution must run BEFORE _record_user — otherwise
-            # _last_bot_message could see this turn (it doesn't, since we
-            # only record bot turns, but kept obvious by ordering).
-            parent_text = (_last_bot_message(chat_id)
-                           if job.get("parent_id") else "")
+            # Reply-to-card = act on THAT draft: a p2p reply whose
+            # parent is an autodraft review card routes by intent —
+            # "send"/"discard" click the button, anything else is a
+            # redo instruction.
+            if job.get("parent_id") and job.get("chat_type") == "p2p":
+                _card_qid = None
+                try:
+                    import autodraft_card as _adc
+                    _card_qid = _adc.qid_for_card_msg(job["parent_id"])
+                except Exception:
+                    _card_qid = None
+                if _card_qid:
+                    txt = (job.get("text") or "").strip()
+                    low = re.sub(r"[.!\s]+$", "", txt.lower())
+                    try:
+                        if low in ("send", "send it", "ok send",
+                                   "yes send", "ok to send", "approve"):
+                            import autodraft_card as _adc
+                            out = _adc.handle_click(
+                                _card_qid, "autodraft_send",
+                                job["sender"],
+                                _display_name(job["sender"]))
+                            reply = ("✅ Sent." if out == "sent"
+                                     else f"Couldn't send: {out}")
+                        elif low in ("discard", "discard it", "delete",
+                                     "delete it", "no", "drop it"):
+                            import autodraft_card as _adc
+                            out = _adc.handle_click(
+                                _card_qid, "autodraft_discard",
+                                job["sender"],
+                                _display_name(job["sender"]))
+                            reply = ("🗑 Discarded." if out == "discarded"
+                                     else f"Couldn't discard: {out}")
+                        else:
+                            from email_autodraft import redo_draft
+                            reply = redo_draft(_card_qid, txt,
+                                               job["sender"])
+                    except Exception as e:
+                        print(f"[lark_bot] card-reply action failed: "
+                              f"{e}", file=sys.stderr, flush=True)
+                        reply = "That hit an error — I've logged it."
+                    if client is None:
+                        client = LarkClient()
+                    mid_ = client.send_text(chat_id, reply)
+                    _record_bot(chat_id, reply, msg_id=mid_ or "")
+                    continue
+            # Parent resolution ladder: own turn store (exact, covers
+            # cards) → IM fetch when it yields real text → newest bot
+            # message as last resort.
+            parent_text = ""
+            if job.get("parent_id"):
+                pid = job["parent_id"]
+                parent_text = _text_for_msgid(pid)
+                if not parent_text:
+                    fetched = _fetch_message_text(pid)
+                    parent_text = fetched if len(fetched) >= 25 else ""
+                parent_text = parent_text or _last_bot_message(chat_id)
             kind, val = _triage(job["text"], job["sender"], chat_id,
-                                job["trust"], parent_text=parent_text)
+                                job["trust"], parent_text=parent_text,
+                                chat_type=job.get("chat_type", ""))
+            # Reply-as-continue: the replied-to message IS declared
+            # context for every plain-text route.
+            if parent_text and kind in ("question", "agent"):
+                val = (f"[The user is replying to this earlier message: "
+                       f"“{parent_text[:600]}”]\n\n{val}")
             # Record the user turn AFTER _triage. Two reasons:
             #   (1) the agent's classifier takes the current text as a
             #       separate arg AND formats history into PRIOR
@@ -1220,7 +1536,7 @@ def _worker():
                 from noto_agent import handle as _agent_handle
                 outcome = _agent_handle(
                     val, chat_id, job.get("sender", ""),
-                    _CHAT_HISTORY.get(chat_id, []),
+                    _history(chat_id),
                     parent_text, card, client,
                     user_context=user_context)
                 # Attribute the message to the skill the planner chose —
@@ -1256,13 +1572,13 @@ def _worker():
                 except Exception:
                     pass
                 reply = _answer_question(
-                    q, _CHAT_HISTORY.get(chat_id, []), chat_id,
+                    q, _history(chat_id), chat_id,
                     user_context=user_context,
                     sender_open_id=job.get("sender", ""))
                 client.send_text(chat_id, reply)
             else:
                 _answer_question(
-                    q, _CHAT_HISTORY.get(chat_id, []), chat_id,
+                    q, _history(chat_id), chat_id,
                     card=card,
                     user_context=user_context,
                     sender_open_id=job.get("sender", ""))
@@ -1290,7 +1606,7 @@ def _worker():
                             open_id=job["sender"],
                             user_msg=_strip_mention(job["text"]),
                             bot_reply=last_bot,
-                            history=_CHAT_HISTORY.get(chat_id, []),
+                            history=_history(chat_id),
                             chat_type="p2p",
                             workflow=workflow,
                         )
@@ -1620,9 +1936,15 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     action = {}
             kind = action.get("action") if isinstance(action, dict) else None
-            print(f"[lark_bot] card.action.trigger with unknown "
-                  f"action={kind!r} — ignoring",
-                  file=sys.stderr, flush=True)
+            if isinstance(kind, str) and kind.startswith("autodraft_"):
+                # Auto-draft review card (Send/Discard) — ACK now,
+                # work in the worker; owner-gated in the handler.
+                _work_q.put({"type": "autodraft_click", "ev": ev,
+                             "action": action})
+            else:
+                print(f"[lark_bot] card.action.trigger with unknown "
+                      f"action={kind!r} — ignoring",
+                      file=sys.stderr, flush=True)
             self._send(200, {"ok": True})
             return
 

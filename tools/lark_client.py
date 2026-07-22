@@ -123,9 +123,16 @@ def assert_no_lark_delete() -> None:
     ]
 
     hits = []
+    # The mail stack is scanned too. ONE approved exception exists:
+    # autodraft_card._delete_draft may DELETE a mail DRAFT — the bot's
+    # own pre-send output, dismissed by its owner from the review card.
+    # That single line carries the safety-scan-ok marker; any OTHER
+    # delete-shape in these files still aborts boot.
     for path in _glob.glob(os.path.join(here, "lark_*.py")) + \
             [os.path.join(here, f) for f in
-             ("noto_research.py", "bitable_store.py")]:
+             ("noto_research.py", "bitable_store.py",
+              "email_autodraft.py", "autodraft_card.py",
+              "mail_store.py", "mail_retrieval.py", "email_playbook.py")]:
         if not os.path.exists(path):
             continue
         for i, line in enumerate(open(path), 1):
