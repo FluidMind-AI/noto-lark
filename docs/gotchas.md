@@ -403,3 +403,17 @@ early-morning jobs.
 **Apple's rsync (openrsync) accepts `--chmod` and silently ignores it** —
 files land with source permissions. Fix perms server-side (forced
 command) or use real rsync.
+
+**The reply endpoint DISCARDS raw EML bodies.** `POST …/messages/{id}/
+reply {"raw": …}` returns code 0 and threads correctly — but silently
+drops your entire body (any MIME shape: plain, alternative, related)
+and delivers an EMPTY reply carrying only its own regenerated quote
+scaffold. We shipped a blank email to a real recipient before catching
+it. Use STRUCTURED fields on this endpoint instead — `body_html` /
+`body_plain_text` as plain strings (NOT base64), plus `to`/`cc`/
+`subject` and `attachments` (`{body: <b64url>, filename, is_inline,
+cid}`) for inline images — those deliver intact and still thread.
+`raw` works fine on the plain `/send` endpoint (which forks threads) —
+the two endpoints have opposite body contracts. Test deliveries with a
+REAL second mailbox: self-sent probes can take many minutes to index,
+long after delivery.

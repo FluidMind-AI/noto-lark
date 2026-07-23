@@ -298,6 +298,74 @@ def _delete_draft(identity: str, draft_id: str) -> bool:
     return r.get("code") == 0
 
 
+def _compose_send_payload(r: Dict[str, Any]) -> Dict[str, Any]:
+    """Structured reply payload built at send time from the queue row:
+    reply text → signature → quoted original, as body_html +
+    body_plain_text (+ inline logo attachment when configured)."""
+    import html as _html
+    from email_autodraft import (_fetch_reply_headers, _signature,
+                                 _quoted_history)
+    user = r["user"]
+    try:
+        h = _fetch_reply_headers(user, r["msg_id"])
+    except Exception:
+        h = {"from": r.get("from_email") or "", "from_name": "",
+             "to": [], "cc": [], "body_html": "", "body_plain": ""}
+    from email_autodraft import USERS
+    mailbox = USERS[user][0]
+    sender = h.get("from") or r.get("from_email") or ""
+    cc, seen = [], {mailbox.lower(), sender.lower()}
+    for a in (h.get("to") or []) + (h.get("cc") or []):
+        if a and a.lower() not in seen:
+            cc.append(a)
+            seen.add(a.lower())
+    sig = _signature(user)
+    body_text = r.get("draft_body") or ""
+
+    def para(t):
+        return "".join(f"<div>{_html.escape(ln) or '<br>'}</div>"
+                       for ln in t.splitlines())
+    m_like = {"date_ms": 0, "from_name": h.get("from_name") or
+              r.get("from_name") or "", "from_email": sender,
+              "body_plain": r.get("inbound_snip") or ""}
+    orig_html = h.get("body_html") or para(h.get("body_plain") or "")
+    html_body = (para(body_text) + "<br>" + (sig.get("html") or
+                 para(sig.get("plain") or "")) + "<br>"
+                 "<div>On earlier message, "
+                 f"{_html.escape(h.get('from_name') or sender)} wrote:"
+                 "<blockquote style='margin:0 0 0 .8ex;border-left:1px "
+                 f"#ccc solid;padding-left:1ex'>{orig_html}</blockquote>"
+                 "</div>")
+    plain_body = (body_text + "\n\n" + (sig.get("plain") or "") +
+                  "\n\n" + _quoted_history(m_like))
+    subj = r.get("subject") or ""
+    payload = {
+        "to": [{"mail_address": sender}],
+        "subject": subj if subj.lower().startswith("re:") else f"Re: {subj}",
+        "body_html": html_body,
+        "body_plain_text": plain_body,
+    }
+    if cc:
+        payload["cc"] = [{"mail_address": a} for a in cc]
+    # inline signature logo (best effort; caller retries without it)
+    imgs = sig.get("inline_images") or {}
+    atts = []
+    for cid, rel in imgs.items():
+        try:
+            path = rel if os.path.isabs(rel) else os.path.join(
+                get_home(), rel)
+            with open(path, "rb") as f:
+                atts.append({"body": base64.urlsafe_b64encode(
+                                 f.read()).decode(),
+                             "filename": os.path.basename(path),
+                             "is_inline": True, "cid": cid})
+        except Exception:
+            pass
+    if atts:
+        payload["attachments"] = atts
+    return payload
+
+
 def handle_click(qid: int, action: str, clicker_open_id: str,
                  clicker_name: str = "") -> str:
     """Send/Discard from the card. Returns a short outcome string (also
@@ -332,17 +400,24 @@ def handle_click(qid: int, action: str, clicker_open_id: str,
                 return "BLOCKED: draft still contains editor notes — use Edit"
         except Exception:
             pass
-        # Send via the NATIVE REPLY endpoint (undocumented; discovered
-        # 2026-07-22): POST /messages/{original_id}/reply threads the
-        # sent mail into the SAME Lark conversation — plain /send
-        # ignores RFC headers and forks a new thread, which let
-        # teammates double-reply. Fallback to /send only if the
-        # original message is gone.
+        # Send via the NATIVE REPLY endpoint with STRUCTURED FIELDS.
+        # Hard-won findings (2026-07-22/23): the reply endpoint threads
+        # into the SAME conversation (plain /send forks a new thread) —
+        # but it silently DISCARDS raw EML bodies (any MIME shape; a
+        # blank email reached a real recipient before we caught it).
+        # Structured body_html/body_plain_text fields deliver intact.
+        payload = _compose_send_payload(r)
         enc = urllib.parse.quote(str(r["msg_id"]), safe="")
         resp = _mail_api(r["identity"], "POST",
                          f"/open-apis/mail/v1/user_mailboxes/me/messages/"
-                         f"{enc}/reply", {"raw": r["raw_eml"]})
-        if resp.get("code") not in (0, None) and resp.get("code") != 0:
+                         f"{enc}/reply", payload)
+        if resp.get("code") != 0 and payload.get("attachments"):
+            # attachment encoding rejected? retry without the logo
+            p2 = {k: v for k, v in payload.items() if k != "attachments"}
+            resp = _mail_api(r["identity"], "POST",
+                             f"/open-apis/mail/v1/user_mailboxes/me/"
+                             f"messages/{enc}/reply", p2)
+        if resp.get("code") != 0:
             print(f"[autodraft_card] native reply failed q{qid} "
                   f"(code {resp.get('code')}) — falling back to plain send",
                   file=sys.stderr, flush=True)
