@@ -232,9 +232,11 @@ Drafting rules, in priority order:
    leave the rest out (note_to_user if {name} should know it). Some
    situations genuinely warrant length — let the matching exemplars be
    the judge of that, not the volume of research.
-6. Concise, professional, no exclamation marks. Do NOT add a sign-off or
-   signature — {name}'s signature block is appended automatically. End the
-   draft after the last substantive line.
+6. Concise, professional, no exclamation marks.
+7. END the draft with {name}'s closing: pick whichever of their usual
+   sign-offs fits the email — {closings} — then "{first}" on its own
+   line. NOTHING after that: the full signature block (title, phone,
+   links) is appended automatically below the closing.
 
 INBOUND EMAIL (from {from_email}, subject "{subject}"):
 {body}
@@ -363,8 +365,9 @@ def _generate(user: str, m: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     style = "\n\n---\n\n".join(_style_exemplars(user, query)) or "(none found)"
     from config import load_config as _lc
     company = (_lc().get("agent", {}) or {}).get("company_name", "the company")
+    closings = " / ".join(f'"{c}"' for c in _signature(user)["closings"])
     base_kwargs = dict(
-        name=name, first=name, company=company, from_email=m.get("from_email") or "?",
+        name=name, first=name, company=company, closings=closings, from_email=m.get("from_email") or "?",
         subject=(m.get("subject") or "")[:150],
         body=(m.get("body_plain") or "")[:2400],
         thread=_thread_context(user, m.get("thread_id") or "",
@@ -501,9 +504,11 @@ def _signature(user: str) -> Dict[str, str]:
     v = cache.get(user)
     if isinstance(v, dict) and v.get("plain"):
         return {"plain": v["plain"], "html": v.get("html") or "",
-                "inline_images": v.get("inline_images") or {}}
+                "inline_images": v.get("inline_images") or {},
+                "closings": v.get("closings") or ["Best,", "Thank you,"]}
     plain = _extract_signature(user)
-    return {"plain": plain, "html": "", "inline_images": {}}
+    return {"plain": plain, "html": "", "inline_images": {},
+            "closings": ["Best,", "Thank you,"]}
 
 
 def _extract_signature(user: str) -> str:
@@ -855,8 +860,10 @@ def _generate_redo(user: str, m: Dict[str, Any], old_draft: str,
     style = "\n\n---\n\n".join(_style_exemplars(user, query)) or "(none found)"
     from config import load_config as _lc
     company = (_lc().get("agent", {}) or {}).get("company_name", "the company")
+    closings = " / ".join(f'"{c}"' for c in _signature(user)["closings"])
     prompt = _PROMPT.format(
         research_spec="", name=name, first=name, company=company,
+        closings=closings,
         from_email=m.get("from_email") or "?",
         subject=(m.get("subject") or "")[:150],
         body=(m.get("body_plain") or "")[:2400],
