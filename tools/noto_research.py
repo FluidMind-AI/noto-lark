@@ -152,7 +152,8 @@ def _claude_bin() -> str:
     return "claude"    # last resort — original behavior
 
 
-def _claude(prompt: str, timeout: int = 150, web: bool = False) -> str:
+def _claude(prompt: str, timeout: int = 150, web: bool = False,
+            model: str = "") -> str:
     """claude -p call. web=True first tries with read-only WebSearch/
     WebFetch tools; ALWAYS falls back to a plain call so the bot still
     answers if the tools path fails. All filesystem / shell tools are
@@ -163,7 +164,7 @@ def _claude(prompt: str, timeout: int = 150, web: bool = False) -> str:
     claude = _claude_bin()
     safe = ["--disallowedTools", _DISALLOWED_TOOLS]
     fmt = ["--output-format", "json"]
-    model = ["--model", _bot_model()]
+    model = ["--model", model or _bot_model()]
     cmds = []
     if web:
         cmds.append([claude, "-p", prompt, *fmt, *model,

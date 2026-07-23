@@ -198,6 +198,14 @@ EXCHANGES:
 {body}"""
 
 
+def _mining_model() -> str:
+    """Mining is high-volume structured extraction — run it on a cheap
+    fast model. Config override: mail.playbook_model."""
+    from config import load_config
+    return ((load_config().get("mail", {}) or {})
+            .get("playbook_model", "claude-haiku-4-5-20251001"))
+
+
 def _extract_batch(pairs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     from noto_research import _claude
     body = ""
@@ -209,7 +217,8 @@ def _extract_batch(pairs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                  f"VP REPLY:\n{p['reply']}\n")
     prompt = _PROMPT.format(n=len(pairs), types=", ".join(SEED_TYPES),
                             body=body)
-    raw = _claude(prompt, timeout=240, web=False) or ""
+    raw = _claude(prompt, timeout=240, web=False,
+                  model=_mining_model()) or ""
     m = re.search(r"\[.*\]", raw, re.S)
     if not m:
         return []
