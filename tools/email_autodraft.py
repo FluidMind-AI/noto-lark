@@ -224,7 +224,14 @@ Drafting rules, in priority order:
    ask the SENDER for it in the reply — and flag alternatives in
    note_to_user (e.g. "if you already know the time, tell me and I'll
    redraft as a confirmation").
-5. LENGTH AND REGISTER COME FROM THE EXEMPLARS, not from how much you
+5. VOICE: {name}'s own past replies below are the gold standard —
+   mimic their vocabulary, energy level and brevity, not a professional
+   ideal. If their replies are blunt and short, be blunt and short.
+{humanizer}
+6. SIGNATURE FACTS: the appended signature block contains contact
+   details only. Never describe signature links as booking/scheduling
+   features.
+7. LENGTH AND REGISTER COME FROM THE EXEMPLARS, not from how much you
    know. Match the playbook exemplars and {name}'s own replies — VP
    emails are typically short and direct. Research exists to make the
    draft ACCURATE (answer what was asked, get facts right), never to
@@ -232,8 +239,8 @@ Drafting rules, in priority order:
    leave the rest out (note_to_user if {name} should know it). Some
    situations genuinely warrant length — let the matching exemplars be
    the judge of that, not the volume of research.
-6. Concise, professional, no exclamation marks.
-7. END the draft with {name}'s closing: pick whichever of their usual
+8. Concise, professional, no exclamation marks.
+9. END the draft with {name}'s closing: pick whichever of their usual
    sign-offs fits the email — {closings} — then "{first}" on its own
    line. NOTHING after that: the full signature block (title, phone,
    links) is appended automatically below the closing.
@@ -367,7 +374,8 @@ def _generate(user: str, m: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     company = (_lc().get("agent", {}) or {}).get("company_name", "the company")
     closings = " / ".join(f'"{c}"' for c in _signature(user)["closings"])
     base_kwargs = dict(
-        name=name, first=name, company=company, closings=closings, from_email=m.get("from_email") or "?",
+        name=name, first=name, company=company, closings=closings,
+        humanizer=__import__("humanizer_rules").humanizer_block(), from_email=m.get("from_email") or "?",
         subject=(m.get("subject") or "")[:150],
         body=(m.get("body_plain") or "")[:2400],
         thread=_thread_context(user, m.get("thread_id") or "",
@@ -864,6 +872,7 @@ def _generate_redo(user: str, m: Dict[str, Any], old_draft: str,
     prompt = _PROMPT.format(
         research_spec="", name=name, first=name, company=company,
         closings=closings,
+        humanizer=__import__("humanizer_rules").humanizer_block(),
         from_email=m.get("from_email") or "?",
         subject=(m.get("subject") or "")[:150],
         body=(m.get("body_plain") or "")[:2400],
