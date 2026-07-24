@@ -547,9 +547,19 @@ def _triage(text: str, sender_open_id: str, chat_id: str,
 
     # Guard: empty / garbled message — answer briefly, do NOT research.
     if len(q.strip()) < 4:
+        # A bare yes/no with nothing pending means a confirmation
+        # expired or was lost — say so instead of the generic hint.
+        if re.fullmatch(r"(yes|no|y|n|ok|si|sí)[.!]?",
+                        q.strip().lower()):
+            return ("reply",
+                    "I don't have anything pending to confirm — that "
+                    "confirmation likely expired. Re-send the request "
+                    "and I'll show the plan again.")
+        hint = ("" if chat_type == "p2p" else
+                " and @mention me with the ask")
         return ("reply",
-                "I didn't catch a question there. If you sent a formatted "
-                "message, please resend it and @mention me with the ask.")
+                "I didn't catch a question there. If you sent a "
+                f"formatted message, please resend it{hint}.")
 
     # The agent owns the dispatch for EVERY other non-trivial message.
     # The agent's planner sees the message + chat history + parent_text
