@@ -20,6 +20,7 @@ column_set elements; card_id↔message_id mapping for updates).
 import base64
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -407,6 +408,26 @@ def handle_click(qid: int, action: str, clicker_open_id: str,
         # blank email reached a real recipient before we caught it).
         # Structured body_html/body_plain_text fields deliver intact.
         payload = _compose_send_payload(r)
+        # PRE-SEND CONTENT GUARD (after the blank-send incident): the
+        # outgoing body MUST contain the draft text the user approved.
+        # If composition ever produces a body without it, we refuse —
+        # a client can never receive an empty or wrong email silently.
+        probe = re.sub(r"\s+", " ", (r.get("draft_body") or "")).strip()[:60]
+        html_norm = re.sub(r"<[^>]+>", " ", payload.get("body_html") or "")
+        html_norm = re.sub(r"\s+", " ", html_norm)
+        import html as _h
+        if probe and probe not in _h.unescape(html_norm):
+            _notify("⛔ Not sent — internal safety check: the composed "
+                    "email did not contain your approved draft text. "
+                    "Nothing was transmitted; the draft is untouched. "
+                    "Engineering has been alerted.")
+            try:
+                from engineering_notify import send as _es
+                _es(f"⛔ autodraft q{qid}: pre-send content guard tripped "
+                    "— composed body missing draft text. Send refused.")
+            except Exception:
+                pass
+            return "BLOCKED: composed body failed content guard"
         enc = urllib.parse.quote(str(r["msg_id"]), safe="")
         resp = _mail_api(r["identity"], "POST",
                          f"/open-apis/mail/v1/user_mailboxes/me/messages/"
@@ -419,11 +440,13 @@ def handle_click(qid: int, action: str, clicker_open_id: str,
                              f"messages/{enc}/reply", p2)
         if resp.get("code") != 0:
             print(f"[autodraft_card] native reply failed q{qid} "
-                  f"(code {resp.get('code')}) — falling back to plain send",
+                  f"(code {resp.get('code')}) — structured /send fallback "
+                  "(content-correct, thread may fork)",
                   file=sys.stderr, flush=True)
+            p3 = {k: v for k, v in payload.items() if k != "attachments"}
             resp = _mail_api(r["identity"], "POST",
-                             "/open-apis/mail/v1/user_mailboxes/me/messages/send",
-                             {"raw": r["raw_eml"]})
+                             "/open-apis/mail/v1/user_mailboxes/me/"
+                             "messages/send", p3)
         if resp.get("code") != 0:
             print(f"[autodraft_card] send failed q{qid}: "
                   f"{resp.get('code')} {str(resp.get('msg'))[:120]}",
@@ -467,6 +490,83 @@ def handle_click(qid: int, action: str, clicker_open_id: str,
         print(f"[autodraft_card] card update failed q{qid}: {e}",
               file=sys.stderr, flush=True)
     return new_status
+
+
+def verify_recent_sends(window_hours: int = 24) -> None:
+    """Post-send delivery verification: confirm each recently-sent row's
+    approved draft text exists in the user's SENT mirror (synced first —
+    incremental, cheap). Mirror-based on purpose: API paging misses
+    older copies and produced false alarms on day one. A true miss
+    alerts engineering + the owner; verification is retried until the
+    row is older than the window (indexing lag tolerated)."""
+    conn = _connect()
+    try:
+        have = {c[1] for c in conn.execute("PRAGMA table_info(queue)")}
+        if "sent_verified" not in have:
+            conn.execute("ALTER TABLE queue ADD COLUMN sent_verified INTEGER")
+            conn.commit()
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM queue WHERE status='sent' AND"
+            " (sent_verified IS NULL OR sent_verified=0)"
+            " AND resolved_at >= datetime('now', 'localtime', ?)",
+            (f"-{window_hours} hours",))]
+    finally:
+        conn.close()
+    if not rows:
+        return
+    import mail_store
+    users = {r["user"] for r in rows}
+    for u in users:
+        try:
+            mail_store.sync(u, labels=("SENT",), quiet=True)
+        except Exception:
+            pass
+    for r in rows:
+        try:
+            age = time.time() - time.mktime(time.strptime(
+                r["resolved_at"], "%Y-%m-%d %H:%M:%S"))
+        except Exception:
+            age = 1e9
+        if age < 300:
+            continue          # give delivery+indexing 5 minutes first
+        probe = (r.get("draft_body") or "").strip()[:50]
+        if not probe:
+            continue
+        mc = mail_store._connect(r["user"])
+        hit = mc.execute(
+            "SELECT 1 FROM messages WHERE label='SENT'"
+            " AND body_plain LIKE ? LIMIT 1",
+            (f"%{probe}%",)).fetchone()
+        mc.close()
+        conn = _connect()
+        if hit:
+            conn.execute("UPDATE queue SET sent_verified=1 WHERE id=?",
+                         (r["id"],))
+        elif age > 1800 and r.get("sent_verified") is None:
+            # >30 min, still absent from the mirror → real alarm, once
+            conn.execute("UPDATE queue SET sent_verified=0 WHERE id=?",
+                         (r["id"],))
+            try:
+                from engineering_notify import send as _es
+                _es(f"🚨 autodraft q{r['id']} ({r['user']}, "
+                    f"“{(r.get('subject') or '')[:40]}”): approved draft "
+                    "text NOT found in the SENT mirror 30+ min after "
+                    "send — possible blank delivery. Investigate.")
+            except Exception:
+                pass
+            try:
+                from lark_client import LarkClient
+                LarkClient().send_text(
+                    r["owner_open_id"],
+                    f"🚨 Heads-up: the email you sent via my card "
+                    f"(“{(r.get('subject') or '')[:50]}”) may not have "
+                    "delivered its full text — please check your Sent "
+                    "folder. Engineering is on it.",
+                    receive_id_type="open_id")
+            except Exception:
+                pass
+        conn.commit()
+        conn.close()
 
 
 if __name__ == "__main__":

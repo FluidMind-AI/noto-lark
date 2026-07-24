@@ -13,3 +13,6 @@ for u in $USERS; do
   python3 tools/mail_store.py sync "$u" --label INBOX >> "$LOG" 2>&1 || true
 done
 echo "[$(date '+%F %T')] $(python3 tools/email_autodraft.py run 2>>"$LOG")" >> "$LOG"
+
+# post-send delivery verification (blank-send guarantee layer)
+python3 -c "import sys;sys.path.insert(0,'tools');import autodraft_card;autodraft_card.verify_recent_sends()" >> "$LOG" 2>&1 || true
