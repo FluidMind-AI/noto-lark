@@ -417,3 +417,13 @@ cid}`) for inline images — those deliver intact and still thread.
 the two endpoints have opposite body contracts. Test deliveries with a
 REAL second mailbox: self-sent probes can take many minutes to index,
 long after delivery.
+
+**Docx text blocks silently truncate around 2,000 chars.** Creating a
+block whose text run exceeds ~2,000 characters returns success but
+stores only the first ~2,000 — the tail is gone with no error (we lost
+half of a 4k-char call note this way, mid-word). Never map "one note →
+one block": split multi-line content into one block per line (dashed
+lines → bullet blocks, bare lines → text blocks) and chunk any single
+line to ≤1,800 chars at word boundaries before creating. Block-children
+create also caps at ~50 blocks per call, so batch (we use 45) with the
+`index` offset advanced per batch.
