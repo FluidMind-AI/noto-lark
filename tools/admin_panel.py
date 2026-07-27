@@ -639,7 +639,8 @@ def _lesson_approve(p: Principal, lid: int, body: bytes) -> Response:
     res = feedback_synthesis.approve_lesson(
         lid, reviewer_open_id=p.open_id, reviewer_name=p.name,
         edited_text=str(data.get("edited_text", "") or ""),
-        reviewer_note=str(data.get("note", "") or ""))
+        reviewer_note=str(data.get("note", "") or ""),
+        force=bool(data.get("force")))
     _audit(p.open_id, p.name, "lessons.approve", str(lid),
            {k: v for k, v in data.items() if k != "_csrf"}, res)
     return _json_resp(200 if res.get("ok") else 409, res)

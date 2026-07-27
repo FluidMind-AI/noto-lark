@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS derived_lessons (
     model                   TEXT NOT NULL DEFAULT '',
     synthesized_at          TEXT,
     status                  TEXT NOT NULL DEFAULT 'pending' CHECK (status IN
-        ('pending','deferred','approved','rejected','superseded')),
+        ('pending','deferred','approved','rejected','superseded',
+         'resolved')),
     reviewed_at             TEXT,
     reviewed_by             TEXT,
     reviewed_note           TEXT
@@ -78,8 +79,34 @@ def _store():
     s = FeedbackStore()
     s.conn.executescript(_SCHEMA)
     _migrate_pp_scope(s.conn)
+    _migrate_resolved_status(s.conn)
     s.conn.commit()
     return s
+
+
+def _migrate_resolved_status(conn) -> None:
+    """One-time table rebuild: allow status='resolved' — the terminal
+    state for lessons whose underlying issue was VERIFIED already
+    fixed (operator directive 2026-07-27: never re-fix what isn't
+    broken). SQLite can't ALTER a CHECK; same rebuild pattern as the
+    pp-scope migration. No-op once migrated."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' "
+        "AND name='derived_lessons'").fetchone()
+    if not row or "'resolved'" in (row[0] or "").replace('"', "'"):
+        return
+    cols = ("id, lesson_text, scope, workflow, reasoning, "
+            "supporting_feedback_ids, superseded_lesson_ids, confidence, "
+            "model, synthesized_at, status, reviewed_at, reviewed_by, "
+            "reviewed_note")
+    conn.executescript(
+        "ALTER TABLE derived_lessons RENAME TO derived_lessons_pre_res;"
+        + _SCHEMA +
+        f"INSERT INTO derived_lessons ({cols}) "
+        f"SELECT {cols} FROM derived_lessons_pre_res;"
+        "DROP TABLE derived_lessons_pre_res;")
+    print("[feedback_synthesis] migrated derived_lessons: status CHECK "
+          "now allows resolved", file=sys.stderr, flush=True)
 
 
 def _migrate_pp_scope(conn) -> None:
@@ -478,10 +505,106 @@ def _parse_lessons(raw: str) -> Optional[List[Dict[str, Any]]]:
 # Review actions (panel + CLI)
 # ---------------------------------------------------------------------------
 
+def fixlog_path() -> str:
+    from config import get_home
+    return os.path.join(get_home(), "brain", "engineering-fixlog.md")
+
+
+_STOPWORDS = frozenset(
+    "the a an and or but for nor with when that this those these from "
+    "into onto over under after before while ensure fix fixed fixes "
+    "noto bot make sure should would could does doesn not are is was "
+    "were been being have has had its their our your his her they them "
+    "all any every so it in on at by of to as be do we".split())
+
+
+def _salient_tokens(text: str) -> set:
+    import re as _re
+    return {t for t in _re.findall(r"[a-z][a-z\-]{3,}", (text or "").lower())
+            if t not in _STOPWORDS}
+
+
+def already_fixed_check(lesson: Dict[str, Any]) -> Dict[str, Any]:
+    """Heuristic guard: does this engineering lesson look ALREADY
+    FIXED? Checks (a) the engineering fixlog (brain/engineering-
+    fixlog.md — one line per shipped fix) for keyword overlap, and
+    (b) sibling resolved/superseded lessons with heavy text overlap.
+    Returns {suspected: bool, evidence: [..]} — advisory only; the
+    approver decides (approve with force=True to override)."""
+    evidence: List[str] = []
+    toks = _salient_tokens(lesson.get("lesson_text", ""))
+    if toks:
+        try:
+            with open(fixlog_path()) as f:
+                for ln in f:
+                    ln = ln.strip()
+                    if not ln.startswith("- "):
+                        continue
+                    hit = toks & _salient_tokens(ln)
+                    if len(hit) >= 3:
+                        evidence.append(f"fixlog: {ln[2:][:160]}")
+        except FileNotFoundError:
+            pass
+        try:
+            s = _store()
+            try:
+                rows = [dict(r) for r in s.conn.execute(
+                    "SELECT id, lesson_text, status, reviewed_note "
+                    "FROM derived_lessons WHERE status IN "
+                    "('resolved','superseded') AND id != ?",
+                    (lesson.get("id", -1),))]
+            finally:
+                s.close()
+            for r in rows:
+                ov = toks & _salient_tokens(r["lesson_text"])
+                if len(ov) >= max(3, len(toks) // 3):
+                    evidence.append(
+                        f"lesson #{r['id']} ({r['status']}): "
+                        f"{(r.get('reviewed_note') or '')[:140]}")
+        except Exception:
+            pass
+    return {"suspected": bool(evidence), "evidence": evidence[:5]}
+
+
+def resolve_lesson(lesson_id: int, evidence: str,
+                   reviewer_name: str = "") -> Dict[str, Any]:
+    """Mark a lesson RESOLVED: the underlying issue is verified already
+    fixed — no backlog entry, no rule; supporting feedback resolves as
+    accepted with the evidence. This is the don't-fix-what-isn't-
+    broken terminal state (operator directive 2026-07-27)."""
+    s = _store()
+    try:
+        r = s.conn.execute("SELECT * FROM derived_lessons WHERE id=?",
+                           (lesson_id,)).fetchone()
+        if not r:
+            return {"ok": False, "error": f"lesson #{lesson_id} not found"}
+        r = dict(r)
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        cur = s.conn.execute(
+            "UPDATE derived_lessons SET status='resolved', "
+            "reviewed_at=?, reviewed_by=?, reviewed_note=? "
+            "WHERE id=? AND status IN ('pending','deferred','approved')",
+            (now, reviewer_name or "(verified)",
+             (evidence or "verified already fixed").strip(), lesson_id))
+        s.conn.commit()
+        if cur.rowcount != 1:
+            return {"ok": False, "error": "not in a resolvable status"}
+        sup = json.loads(r["supporting_feedback_ids"] or "[]")
+    finally:
+        s.close()
+    resolved = _resolve_supporting(
+        sup, "accepted",
+        f"lesson #{lesson_id} resolved — already fixed: "
+        f"{(evidence or '')[:200]}")
+    return {"ok": True, "lesson_id": lesson_id,
+            "feedback_resolved": resolved}
+
+
 def approve_lesson(lesson_id: int, reviewer_open_id: str = "",
                    reviewer_name: str = "",
                    edited_text: str = "",
-                   reviewer_note: str = "") -> Dict[str, Any]:
+                   reviewer_note: str = "",
+                   force: bool = False) -> Dict[str, Any]:
     """Approve a lesson: route by scope, resolve its supporting feedback.
     CAS on status so double-approval can't double-append.
 
@@ -503,6 +626,17 @@ def approve_lesson(lesson_id: int, reviewer_open_id: str = "",
             return {"ok": False,
                     "error": f"scope '{r['scope']}' is not actionable — "
                              f"it exists as an audit record, not a rule"}
+        if r["scope"] == "engineering" and not force:
+            chk = already_fixed_check(r)
+            if chk["suspected"]:
+                # Don't fix what isn't broken: surface the evidence and
+                # require an explicit approve-anyway instead of silently
+                # backlogging a possibly-dead issue.
+                return {"ok": False, "needs_verify": True,
+                        "evidence": chk["evidence"],
+                        "error": "this may already be fixed — verify "
+                                 "it still reproduces, then approve "
+                                 "again with force, or resolve it"}
         text = (edited_text or r["lesson_text"]).strip()
         note = (reviewer_note or "").strip()
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")

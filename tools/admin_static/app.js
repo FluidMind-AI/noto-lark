@@ -66,7 +66,9 @@ async function api(path, { method = "GET", body } = {}) {
   if (res.status === 401) { state.me = null; renderLogin(); throw new Error("signed out"); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.ok === false) {
-    throw new Error(data.error || `HTTP ${res.status}`);
+    const err = new Error(data.error || `HTTP ${res.status}`);
+    err.payload = data;
+    throw err;
   }
   return data;
 }
@@ -115,6 +117,35 @@ function queueAction({ label, url, body, grace = 3500, onCommit, onUndo }) {
         const res = await api(url, { method: "POST", body });
         onCommit && onCommit(res);
       } catch (e) {
+        if (e.payload && e.payload.needs_verify) {
+          // Engineering lesson that looks ALREADY FIXED — surface the
+          // evidence; approving anyway requires the explicit override
+          // (don't fix what isn't broken, operator 2026-07-27).
+          const ev = (e.payload.evidence || [])
+            .map(x => `<li>${esc(x)}</li>`).join("");
+          const box = h(`<div class="toast bad" style="flex-direction:column;align-items:flex-start;max-width:460px">
+              <span><b>May already be fixed</b> — verify it still reproduces before approving:</span>
+              <ul style="margin:6px 0 6px 18px">${ev}</ul>
+              <span>
+                <button class="force">Approve anyway</button>
+                <button class="dismiss">Leave pending</button>
+              </span></div>`);
+          toastHost().appendChild(box);
+          $(".force", box).onclick = async () => {
+            box.remove();
+            try {
+              const res = await api(url, { method: "POST",
+                body: { ...body, force: true } });
+              onCommit && onCommit(res);
+              notify("approved (override)", "ok", 4000);
+            } catch (e2) {
+              notify(`Failed: ${e2.message}`, "bad", 6000);
+              onUndo && onUndo();
+            }
+          };
+          $(".dismiss", box).onclick = () => { box.remove(); onUndo && onUndo(); };
+          return;
+        }
         notify(`Failed: ${e.message}`, "bad", 6000);
         onUndo && onUndo();     // put the row back — the action didn't land
       }
@@ -959,6 +990,7 @@ const pillKind = (k) => ({
 const pillStatus = (s) => ({
   pending: '<span class="pill warn">pending</span>',
   approved: '<span class="pill ok">approved</span>',
+  resolved: '<span class="pill ok">resolved · already fixed</span>',
   active: '<span class="pill ok">active</span>',
   rejected: '<span class="pill bad">rejected</span>',
   superseded: '<span class="pill dim">superseded</span>',

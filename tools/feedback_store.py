@@ -346,6 +346,13 @@ can plan the next batch of work.
 markdown bullet. Mark done by editing the line (`- [x]`) or moving
 it into a "Completed" section.
 
+**Reproduce before you fix:** before implementing ANY item here,
+(1) check `brain/engineering-fixlog.md` for a fix that already
+covers it, and (2) reproduce the issue live. If it doesn't
+reproduce, don't touch the code — resolve the lesson with evidence
+(`feedback_synthesis.resolve_lesson`) instead. Never fix what isn't
+broken. When a fix ships, append it to the fixlog.
+
 ---
 
 """
