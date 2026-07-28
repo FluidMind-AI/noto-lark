@@ -1777,6 +1777,24 @@ class LarkClient:
                 break
         return out
 
+    def create_folder(self, name: str, parent_token: str) -> str:
+        """Create a Drive folder; returns its token. CREATE-only (no
+        move/rename/delete surface). Lets doc-creation flows make a
+        missing per-entity folder instead of dumping into a fallback."""
+        from lark_oapi.api.drive.v1 import (CreateFolderFileRequest,
+                                             CreateFolderFileRequestBody)
+        _LIMITS["doc"].acquire()
+        req = (CreateFolderFileRequest.builder()
+               .request_body(CreateFolderFileRequestBody.builder()
+                             .name(name)
+                             .folder_token(parent_token or "")
+                             .build())
+               .build())
+        data = self._check(
+            self._client.drive.v1.file.create_folder(req, self._opt()),
+            "create_folder")
+        return getattr(data, "token", "") or ""
+
     # -- bitable ----------------------------------------------------------
     # Lark resources can NEVER be shared with bot/app identities — access
     # to a wiki-mounted Base flows through the Noto USER token. We pass
