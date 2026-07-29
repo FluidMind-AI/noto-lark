@@ -185,6 +185,34 @@ def check_schedules():
 
 def check_data_freshness():
     """Nightly pipelines actually PRODUCED data, not just ran."""
+    # DM feedback coverage (operator 2026-07-29): every chat the bot
+    # converses in must be in the swept corpus — recruiters give
+    # feedback in DMs, not just groups.
+    try:
+        ctx = sqlite3.connect(os.path.join(
+            HOME, "indexes", "chat_context.db"), timeout=10)
+        bot_chats = {r[0] for r in ctx.execute(
+            "SELECT DISTINCT chat_id FROM turns")}
+        ctx.close()
+        cdb = sqlite3.connect(os.path.join(
+            HOME, "indexes", "chat_messages.db"), timeout=10)
+        corpus_chats = {r[0] for r in cdb.execute(
+            "SELECT DISTINCT chat_id FROM chats")}
+        cdb.close()
+        try:
+            from config import load_config as _lc2
+            excl = set((_lc2().get("lark") or {})
+                       .get("chat_corpus_excluded_chats", []) or [])
+        except Exception:
+            excl = set()
+        missing = bot_chats - corpus_chats - excl
+        result("DM feedback coverage", "data",
+               "ok" if not missing else "fail",
+               "" if not missing else
+               f"{len(missing)} bot chat(s) not in the swept corpus")
+    except Exception as e:
+        result("DM feedback coverage", "data", "warn", str(e)[:100])
+
     probes = [
         ("nuggets extracted", "indexes/chat_nuggets.db",
          "SELECT MAX(created_at) FROM chat_nuggets", 48),

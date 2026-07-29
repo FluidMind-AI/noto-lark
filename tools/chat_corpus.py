@@ -334,6 +334,27 @@ def sync_chat(client: Any, chat_id: str,
     return {"chat_id": chat_id, "fetched": len(msgs), "added": added}
 
 
+def _name_dm_chats(db) -> None:
+    """Label p2p chats by their human counterpart ("DM: Sharmaine…")
+    from the messages already synced — readable in the panel + sweep
+    provenance."""
+    rows = db.execute(
+        "SELECT c.chat_id FROM chats c WHERE c.chat_type='p2p' "
+        "AND (c.chat_name IS NULL OR c.chat_name IN ('(DM)',''))"
+    ).fetchall()
+    for (cid,) in rows:
+        r = db.execute(
+            "SELECT sender_name, COUNT(*) n FROM chat_messages "
+            "WHERE chat_id=? AND sender_authority != 'bot' "
+            "AND COALESCE(sender_name,'') != '' "
+            "GROUP BY sender_name ORDER BY n DESC LIMIT 1",
+            (cid,)).fetchone()
+        if r and r[0]:
+            db.execute("UPDATE chats SET chat_name=? WHERE chat_id=?",
+                       (f"DM: {r[0]}", cid))
+    db.commit()
+
+
 def sync_all(full: bool = False, verbose: bool = True) -> Dict[str, Any]:
     """Walk every accessible group chat (minus exclusions) and sync."""
     from lark_client import LarkClient
@@ -346,11 +367,30 @@ def sync_all(full: bool = False, verbose: bool = True) -> Dict[str, Any]:
     if verbose:
         print(f"[chat_corpus] discovered {len(chats)} chats; "
               f"{len(_excluded_chats())} excluded", flush=True)
-    # filter: group chats only, exclude listed
+    # Groups AND DMs (operator directive 2026-07-29: recruiters give
+    # feedback/corrections in DMs — the sweep must see them, not just
+    # the group chats). DM ids come from the API listing when present
+    # plus the bot's own conversation record (chat_context.db), which
+    # reliably has every p2p chat the bot has ever talked in.
     targets = [c for c in chats
                if (c.get("chat_mode") or c.get("chat_type") or "") in
-               ("group", "topic")
+               ("group", "topic", "p2p")
                and (c.get("chat_id") or "") not in _excluded_chats()]
+    known = {c.get("chat_id") for c in targets}
+    try:
+        ctx = sqlite3.connect(os.path.join(_home(), "indexes",
+                                           "chat_context.db"))
+        dm_ids = [r[0] for r in ctx.execute(
+            "SELECT DISTINCT chat_id FROM turns")]
+        ctx.close()
+        for cid in dm_ids:
+            if cid and cid not in known                     and cid not in _excluded_chats():
+                targets.append({"chat_id": cid, "name": "(DM)",
+                                "chat_mode": "p2p"})
+                known.add(cid)
+    except Exception as e:
+        print(f"[chat_corpus] DM discovery via chat_context failed: "
+              f"{e}", file=sys.stderr, flush=True)
     # update chats table with discovered metadata
     db = _connect()
     try:
@@ -363,10 +403,11 @@ def sync_all(full: bool = False, verbose: bool = True) -> Dict[str, Any]:
                 "chat_type, discovered_at) VALUES (?,?,?,?)",
                 (cid, c.get("name"), c.get("chat_mode") or "group",
                  datetime.now(timezone.utc).isoformat(timespec="seconds")))
-            db.execute(
-                "UPDATE chats SET chat_name=?, chat_type=? "
-                "WHERE chat_id=?",
-                (c.get("name"), c.get("chat_mode") or "group", cid))
+            if c.get("name") != "(DM)":
+                db.execute(
+                    "UPDATE chats SET chat_name=?, chat_type=? "
+                    "WHERE chat_id=?",
+                    (c.get("name"), c.get("chat_mode") or "group", cid))
         db.commit()
     finally:
         db.close()
@@ -386,6 +427,13 @@ def sync_all(full: bool = False, verbose: bool = True) -> Dict[str, Any]:
             if verbose:
                 print(f"  [warn] sync {cid}: {str(e)[:80]}",
                       flush=True)
+    try:
+        db = _connect()
+        _name_dm_chats(db)
+        db.close()
+    except Exception as e:
+        print(f"[chat_corpus] DM naming failed: {e}",
+              file=sys.stderr, flush=True)
     if verbose:
         print(f"[chat_corpus] sync_all done — chats={out['chats_synced']} "
               f"new_messages={out['messages_added']}", flush=True)
