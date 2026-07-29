@@ -19,7 +19,20 @@ WRITE LIKE A HUMAN — hard rules (the author's own writing samples
 override these; nothing here may change facts):
 - Kill AI-tell vocabulary: wheelhouse, fascinating, leverage, delve,
   tapestry, landscape, robust, seamless, journey, elevate, "add real
-  value", "excited to", "I'd love to", "resonates", "truly", "keen".
+  value", "excited to", "I'd love to", "resonates", "truly", "keen",
+  actually, additionally, crucial, pivotal, showcase, testament,
+  underscore, vibrant, boasts, renowned, nestled, groundbreaking,
+  intricate, foster, garner, "align with", "evolving landscape".
+- No significance inflation: "serves as", "stands as", "plays a
+  vital/key role", "marks a shift", "setting the stage", "reflects
+  broader", "underscores its importance".
+- HOUSE LIST (org-specific tells; edit for your org): "genuine/genuinely" and intensifier
+  "real" ("real depth", "real appetite") are our own tells — banned.
+  ("real estate" the practice area is obviously fine.) Don't lean on
+  any one intensifier ("strong" at most once per entry); state the
+  EVIDENCE instead of intensifying the claim.
+- No meta-commentary/signposting: "let's dive in", "here's what you
+  need to know", "it's worth noting". No curly quotes.
 - No inflated significance or flattery. State the thing, not how
   remarkable the thing is. One idea per sentence when possible.
 - Plain verbs: "is/does/runs", never "serves as/functions as/acts as".
