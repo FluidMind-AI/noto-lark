@@ -49,8 +49,10 @@ _DISALLOWED_TOOLS = ",".join((
 ))
 # Defense in depth: a confined scratch cwd so any future tool that
 # slipped through has nowhere useful to write.
-_SAFE_CWD = os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "lark", "claude-scratch")
+# OUTSIDE any .claude project root: a child `claude -p` whose cwd maps
+# to a known project can attach to that project's ACTIVE session and
+# answer as that session instead of doing its text job.
+_SAFE_CWD = "/private/tmp/noto-claude-sandbox"
 os.makedirs(_SAFE_CWD, exist_ok=True)
 
 
@@ -172,8 +174,11 @@ def _claude(prompt: str, timeout: int = 150, web: bool = False,
     cmds.append([claude, "-p", prompt, *fmt, *model] + safe)  # plain fallback
     for i, cmd in enumerate(cmds, 1):
         try:
+            _env = {k: v for k, v in os.environ.items()
+                    if not k.startswith(("CLAUDE", "ANTHROPIC_"))}
             res = subprocess.run(cmd, cwd=_SAFE_CWD, capture_output=True,
-                                 text=True, timeout=timeout)
+                                 text=True, timeout=timeout, env=_env,
+                                 stdin=subprocess.DEVNULL)
             stdout = (res.stdout or "").strip()
             if res.returncode == 0 and stdout:
                 # Try to parse the JSON envelope; fall back to raw on any error
