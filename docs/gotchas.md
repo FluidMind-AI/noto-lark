@@ -427,3 +427,15 @@ lines → bullet blocks, bare lines → text blocks) and chunk any single
 line to ≤1,800 chars at word boundaries before creating. Block-children
 create also caps at ~50 blocks per call, so batch (we use 45) with the
 `index` offset advanced per batch.
+
+**A `claude -p` child can ATTACH to your live session.** If a
+subprocess `claude -p` call runs with its cwd inside a directory that
+maps to a `.claude` project with an active session, the child can
+bind to that session — inheriting its tools and conversation history —
+and "answer" as that session instead of doing the stateless text job
+(we saw pipeline calls quoting the parent session's tool names, and
+intermittent empty rc=1 exits from the same cause). Scrubbing
+`CLAUDE*`/`ANTHROPIC_*` env vars is NOT sufficient. Run text-function
+children with: cwd in a project-free directory (`/private/tmp/...`),
+scrubbed env, AND `stdin=subprocess.DEVNULL`. Symptom signature:
+conversational output referencing things never in your prompt.
