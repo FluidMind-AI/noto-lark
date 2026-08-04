@@ -34,7 +34,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import load_config, get_home, get_path  # noqa: E402
+from config import (load_config, get_home, get_path,  # noqa: E402
+                    get_profile, profile_config, agent_display_name,
+                    state_dir)
+
+# Bot profile for THIS process (see config.get_profile). "default" =
+# the primary bot, byte-identical legacy behavior. "mail" = the
+# dedicated mail bot: own Lark app identity, own port/state, mail-only
+# surface (_triage_mail). Resolved once — a process IS one bot.
+_PROFILE = get_profile()
+_IS_MAIL_PROFILE = _PROFILE == "mail"
 
 # ---------------------------------------------------------------------------
 # Privacy assertion — refuse to serve if anything resolves outside company ns
@@ -630,11 +639,115 @@ def _answer_question(q: str, history: list, chat_id: str,
     return reply
 
 
+def _triage_mail(text: str, sender_open_id: str, chat_id: str,
+                 trust: str, parent_text: str = "",
+                 chat_type: str = "") -> Tuple[str, str]:
+    """Mail-profile triage — the dedicated email bot's ENTIRE surface.
+
+    Deliberately tiny: this bot does email and nothing else, so the
+    context stays clean and mail traffic never touches the knowledge
+    bot. Same hard gates as the main triage: sanitizer first, and all
+    mailbox access is owner+p2p-only inside _cmd_mail. Everything a DM
+    says that isn't a command is treated as a question about the
+    sender's OWN mailbox; non-mail asks get a redirect to the main bot.
+
+    Only ever returns ('reply', text) — so the worker's agent/Q&A
+    paths, per-user-memory read AND passive memory write (both gated
+    on kind != 'reply') are all naturally inert in this profile."""
+    from lark_sanitizer import sanitize_lark_content
+    clean = sanitize_lark_content(text, sender_open_id, sender_open_id,
+                                  trust)
+    if clean["security"]["risk_summary"] in ("flagged", "dangerous"):
+        return ("reply",
+                "⚠️ This message was flagged as a possible prompt-injection "
+                "attempt and was not executed. If this was a genuine "
+                "question, please rephrase it. (Operator notified.)")
+
+    q = _strip_mention(text)
+    me = agent_display_name()
+    primary = (load_config().get("agent") or {}).get("name") or "the main bot"
+
+    # Mailboxes are private — this bot converses in 1:1 DMs only.
+    if (chat_type or "").lower() != "p2p":
+        return ("reply",
+                f"🔒 I'm {me} — I handle email, and everything I do "
+                "touches a private mailbox, so I only work in a 1:1 DM. "
+                "Message me directly!")
+
+    # Auto-draft REDO: "redo q#8: shorter, confirm Thursday" — same
+    # contract as the main bot (ownership verified inside redo_draft).
+    _redo = re.match(r"redo\s*q?#?(\d+)\s*[:,\-—]?\s*(.*)", q.strip(),
+                     re.I | re.S)
+    if _redo:
+        instruction = _redo.group(2).strip()
+        if not instruction:
+            return ("reply", "Tell me how to change it — e.g. "
+                    f"`redo q#{_redo.group(1)}: shorter, and confirm "
+                    "Thursday works`.")
+        try:
+            from email_autodraft import redo_draft
+            return ("reply", redo_draft(int(_redo.group(1)), instruction,
+                                        sender_open_id))
+        except Exception as e:
+            print(f"[lark_bot] redo failed: {e}", file=sys.stderr,
+                  flush=True)
+            return ("reply", "Redo hit an error — I've logged it.")
+
+    cmd = parse_command(q)
+    if cmd:
+        name, args = cmd
+        if name == "help":
+            return ("reply",
+                    f"👋 I'm **{me}** — your email assistant. In this "
+                    "DM I only ever look at YOUR mailbox, never anyone "
+                    "else's.\n\n"
+                    "**Ask about your mail** (no command needed): "
+                    "`did they ever reply about the contract?` · "
+                    "`what's still unanswered from this week?`\n\n"
+                    "**Draft replies:** when an email addressed to you "
+                    "needs an answer, I place a draft in your Mail "
+                    "Drafts and send you a review card — reply `send`, "
+                    "`discard`, or just tell me what to change "
+                    "(`shorter, confirm Thursday`). `redo q#8: <how>` "
+                    "works any time.\n\n"
+                    "**Admin:** `/playbook` — the house response "
+                    "playbook.\n\n"
+                    f"For everything else, talk to **{primary}**.")
+        if name in ("mail", "inbox"):
+            return ("reply", _cmd_mail(args, sender_open_id, chat_type))
+        if name == "playbook":
+            return ("reply", _cmd_playbook(args, sender_open_id))
+        # Recognized main-bot command — redirect, don't half-serve.
+        return ("reply",
+                f"That one's **{primary}'s** job — I'm {me}, I only "
+                "do email. Ask me about your inbox, or `/help` for "
+                "what I can do.")
+
+    if len(q.strip()) < 4:
+        return ("reply",
+                f"Hi! I'm {me} — ask me anything about your email "
+                "(`/help` for more)")
+
+    # Default: a DM to the mail bot IS a mailbox question.
+    return ("reply", _cmd_mail(q, sender_open_id, chat_type))
+
+
+def _route(text: str, sender_open_id: str, chat_id: str, trust: str,
+           parent_text: str = "", chat_type: str = "") -> Tuple[str, str]:
+    """Profile dispatch: the mail bot runs its own tiny triage; the
+    default profile runs the full one (unchanged)."""
+    if _IS_MAIL_PROFILE:
+        return _triage_mail(text, sender_open_id, chat_id, trust,
+                            parent_text=parent_text, chat_type=chat_type)
+    return _triage(text, sender_open_id, chat_id, trust,
+                   parent_text=parent_text, chat_type=chat_type)
+
+
 def handle_message(text: str, sender_open_id: str, chat_id: str,
                    trust: str) -> str:
     """Conversation-aware document Q&A (non-streaming). The caller sends
     the reply. Used for the streaming fallback and by selftests."""
-    kind, val = _triage(text, sender_open_id, chat_id, trust)
+    kind, val = _route(text, sender_open_id, chat_id, trust)
     if kind == "reply":
         return val
     return _answer_question(val, _history(chat_id), chat_id)
@@ -663,8 +776,9 @@ def _cmd_mail(args: str, sender_open_id: str, chat_type: str) -> str:
         if (chat_type or "").lower() != "p2p":
             return ("🔒 I only answer mailbox questions in a private 1:1 "
                     "DM with the mailbox owner — ask me there.")
-        return ("Your mailbox isn't connected. Ask an admin to add you "
-                "to mail.users in the config (+ tenant data-range).")
+        return (f"Your mailbox isn't connected to {agent_display_name()}. "
+                "Ask an admin to add you to mail.users in the config "
+                "(+ tenant data-range).")
     q = (args or "").strip()
     if not q:
         return ("Ask me anything about your own email, e.g. "
@@ -1078,7 +1192,7 @@ def _resolve_operator(sender_open_id: str) -> Dict[str, Any]:
 # Persisted to disk: the first real 👍 was lost because the bot had
 # restarted between the answer and the reaction.
 _LAST_QA: Dict[str, Dict[str, Any]] = {}
-_LAST_QA_PATH = os.path.join(get_home(), "lark", "last_qa.json")
+_LAST_QA_PATH = os.path.join(state_dir(), "last_qa.json")
 
 
 def _load_last_qa() -> None:
@@ -1315,6 +1429,18 @@ def _worker():
             # expenses.py self-gates on its feature flag and returns
             # None when off (silent no-op for file messages).
             att = job.get("attachment")
+            if att and _IS_MAIL_PROFILE:
+                # Receipts/screenshots are the main bot's job — redirect
+                # rather than half-handle (expenses/calendar state and
+                # their pending flows live with the primary bot).
+                mid_ = client.send_text(
+                    chat_id,
+                    f"I'm {agent_display_name()} — I only handle "
+                    "email. Send receipts or screenshots to the main "
+                    "bot.")
+                _record_bot(chat_id, "(attachment redirect)",
+                            msg_id=mid_ or '')
+                continue
             if att:
                 if (job.get("chat_type") == "p2p"
                         and job.get("trust") in ("operator", "employee")):
@@ -1443,9 +1569,9 @@ def _worker():
                     fetched = _fetch_message_text(pid)
                     parent_text = fetched if len(fetched) >= 25 else ""
                 parent_text = parent_text or _last_bot_message(chat_id)
-            kind, val = _triage(job["text"], job["sender"], chat_id,
-                                job["trust"], parent_text=parent_text,
-                                chat_type=job.get("chat_type", ""))
+            kind, val = _route(job["text"], job["sender"], chat_id,
+                               job["trust"], parent_text=parent_text,
+                               chat_type=job.get("chat_type", ""))
             # Reply-as-continue: the replied-to message IS declared
             # context for every plain-text route.
             if parent_text and kind in ("question", "agent"):
@@ -1690,7 +1816,7 @@ _STATS_LOCK = threading.Lock()
 
 
 def _bot_stats_path() -> str:
-    return os.path.join(get_home(), "lark", "bot_stats.json")
+    return os.path.join(state_dir(), "bot_stats.json")
 
 
 def _write_bot_stats() -> None:
@@ -1988,6 +2114,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if hdr.get("event_type") == "im.message.reaction.created_v1":
+            if _IS_MAIL_PROFILE:
+                # Reaction→retrieval-recipe capture is a knowledge-bot
+                # feature (qa recipes); the mail bot just ACKs.
+                self._send(200, {"ok": True})
+                return
             ev_r = data.get("event", {}) or {}
             print(f"[lark_bot] REACTION "
                   f"{(ev_r.get('reaction_type') or {}).get('emoji_type')}"
@@ -2089,14 +2220,34 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"ok": True})               # <3s ACK
 
 
+def _seen_events_path() -> str:
+    """Non-default profiles keep their event-dedupe set in their OWN
+    state dir — lark/state.json belongs to the primary bot + sync
+    pipeline (chat cursors etc.) and must stay single-writer."""
+    return os.path.join(state_dir(), "seen_events.json")
+
+
 def _persist_event_id(eid: str) -> None:
     try:
-        from lark_sync import _load_state, _save_state
-        st = _load_state()
-        ids = st.setdefault("seen_event_ids", [])
-        ids.append(eid)
-        st["seen_event_ids"] = ids[-5000:]
-        _save_state(st)
+        if _PROFILE == "default":
+            from lark_sync import _load_state, _save_state
+            st = _load_state()
+            ids = st.setdefault("seen_event_ids", [])
+            ids.append(eid)
+            st["seen_event_ids"] = ids[-5000:]
+            _save_state(st)
+        else:
+            p = _seen_events_path()
+            try:
+                with open(p) as f:
+                    ids = json.load(f).get("seen_event_ids", [])
+            except Exception:
+                ids = []
+            ids.append(eid)
+            tmp = p + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump({"seen_event_ids": ids[-5000:]}, f)
+            os.replace(tmp, p)
     except Exception:
         pass
 
@@ -2129,8 +2280,12 @@ def serve() -> int:
         print(f"[lark_bot] could not fetch bot open_id: {e}",
               file=sys.stderr, flush=True)
     try:
-        from lark_sync import _load_state
-        Handler.seen = set(_load_state().get("seen_event_ids", []))
+        if _PROFILE == "default":
+            from lark_sync import _load_state
+            Handler.seen = set(_load_state().get("seen_event_ids", []))
+        else:
+            with open(_seen_events_path()) as f:
+                Handler.seen = set(json.load(f).get("seen_event_ids", []))
     except Exception:
         Handler.seen = set()
     _load_last_qa()
@@ -2154,8 +2309,12 @@ def serve() -> int:
                     pass
                 time.sleep(3)
     threading.Thread(target=_worker_supervisor, daemon=True).start()
-    host, _, port = load_config().get("lark", {}).get(
-        "webhook_listen", "127.0.0.1:8088").partition(":")
+    listen = (profile_config().get("webhook_listen")
+              or load_config().get("lark", {}).get(
+                  "webhook_listen", "127.0.0.1:8088"))
+    host, _, port = listen.partition(":")
+    print(f"[lark_bot] profile={_PROFILE} "
+          f"bot={agent_display_name()!r}", file=sys.stderr, flush=True)
     srv = ThreadingHTTPServer((host, int(port)), Handler)
     # Refresh the dashboard sidecar with the real port + fresh start_time.
     # _BOT_STATS["start_time"] was set at import; reset here so a stale
@@ -2246,6 +2405,29 @@ def _selftest() -> int:
         print("PASS: triage routes commands vs questions vs trivial")
     else:
         print(f"FAIL: triage {k_help}/{k_q}/{k_tiny}"); ok = False
+
+    # mail-profile triage — profile-independent code, testable offline
+    # from any profile. Every path must return kind='reply' (that's
+    # what keeps memory/agent paths inert).
+    mk_grp, mv_grp = _triage_mail("hello", "ouX", "oc1", "external",
+                                  chat_type="group")
+    mk_help, mv_help = _triage_mail("/help", "ouX", "oc1", "external",
+                                    chat_type="p2p")
+    mk_cmd, mv_cmd = _triage_mail("/nuggets", "ouX", "oc1",
+                                  "operator", chat_type="p2p")
+    mk_nl, mv_nl = _triage_mail("did they reply about the contract?",
+                                "ouX", "oc1", "employee",
+                                chat_type="p2p")
+    if (mk_grp == mk_help == mk_cmd == mk_nl == "reply"
+            and "1:1 DM" in mv_grp
+            and "email" in mv_help.lower()
+            and "job" in mv_cmd
+            and "mailbox" in mv_nl.lower()):
+        print("PASS: mail-profile triage (group gate / help / "
+              "redirect / NL→own-mailbox)")
+    else:
+        print(f"FAIL: mail triage {mk_grp}/{mk_help}/{mk_cmd}/{mk_nl}")
+        ok = False
 
     # streaming card builds against a fake client (no network)
     try:

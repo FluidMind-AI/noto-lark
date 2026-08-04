@@ -42,35 +42,77 @@ _ENV_KEYS = {
 }
 
 
+def _read_credentials_file() -> Dict[str, Any]:
+    """Parse the credentials yaml (empty dict on absence/error)."""
+    cred_path = get_path("credentials")
+    if not os.path.exists(cred_path):
+        return {}
+    try:
+        import yaml
+        with open(cred_path) as f:
+            data = yaml.safe_load(f) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception as e:  # pragma: no cover - defensive
+        print(f"[lark_client] warning: could not read {cred_path}: {e}",
+              file=sys.stderr)
+        return {}
+
+
 def load_lark_credentials() -> Dict[str, str]:
-    """Resolve Lark credentials. Env vars take precedence over the file.
+    """Resolve Lark credentials for THIS process's bot profile.
+    Env vars take precedence over the file.
+
+    Default profile -> `lark:` section (legacy, unchanged). Any other
+    profile -> `lark_profiles.<name>:` — its OWN Lark app identity —
+    and missing credentials are a HARD error: a specialized bot must
+    never silently fall back to the primary bot's app identity.
 
     Returns dict with keys: app_id, app_secret, verification_token,
     encrypt_key (missing values are empty strings).
     """
+    from config import get_profile
+    profile = get_profile()
     creds = {k: "" for k in _ENV_KEYS}
 
-    # File fallback (brain/credentials.yaml -> `lark:` section)
-    cred_path = get_path("credentials")
-    if os.path.exists(cred_path):
-        try:
-            import yaml
-            with open(cred_path) as f:
-                data = yaml.safe_load(f) or {}
-            lark_cfg = (data.get("lark") or {}) if isinstance(data, dict) else {}
-            for k in creds:
-                if lark_cfg.get(k):
-                    creds[k] = str(lark_cfg[k])
-        except Exception as e:  # pragma: no cover - defensive
-            print(f"[lark_client] warning: could not read {cred_path}: {e}",
-                  file=sys.stderr)
+    data = _read_credentials_file()
+    if profile == "default":
+        lark_cfg = data.get("lark") or {}
+    else:
+        lark_cfg = (data.get("lark_profiles") or {}).get(profile) or {}
+    for k in creds:
+        if lark_cfg.get(k):
+            creds[k] = str(lark_cfg[k])
 
     # Env override (highest precedence)
     for k, env in _ENV_KEYS.items():
         if os.environ.get(env):
             creds[k] = os.environ[env]
 
+    if profile != "default" and not creds["app_id"]:
+        raise RuntimeError(
+            f"Bot profile {profile!r} has no Lark app credentials — add a "
+            f"`lark_profiles.{profile}:` block (app_id/app_secret/"
+            f"verification_token/encrypt_key) to {get_path('credentials')}. "
+            f"Refusing to fall back to the primary bot's app identity.")
+
     return creds
+
+
+def credentials_for_app(app_id: str) -> Dict[str, str]:
+    """Credentials for a SPECIFIC Lark app, wherever its block lives
+    (`lark:` or any `lark_profiles.*`). Used by lark_oauth to refresh a
+    user token with the app that ISSUED it — tokens are app-bound, and
+    either bot process may hold the keepalive duty for both apps.
+    Falls back to this process's own profile creds when app_id is
+    empty/unknown (legacy token files predate app_id stamping)."""
+    if app_id:
+        data = _read_credentials_file()
+        blocks = [data.get("lark") or {}]
+        blocks += list((data.get("lark_profiles") or {}).values())
+        for b in blocks:
+            if b and str(b.get("app_id") or "") == app_id:
+                return {k: str(b.get(k) or "") for k in _ENV_KEYS}
+    return load_lark_credentials()
 
 
 def assert_no_lark_delete() -> None:

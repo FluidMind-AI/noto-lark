@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Dedicated mail-bot webhook (bot profile "mail") — a SECOND bot
+     process from the same repo: its own Lark custom app identity
+     (credentials.yaml -> lark_profiles.mail), its own port + funnel
+     HTTPS port (config profiles.mail), its own state under
+     lark/profiles/mail/, and a mail-only surface. See docs/setup.md
+     "Multi-bot profiles". Install only after the second app exists and
+     its credentials are filled in. Edit paths for your install. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.noto.mailbot</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/PATH/TO/REPO/tools/lark-bot-run.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/PATH/TO/REPO</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LOLABOT_HOME</key>
+    <string>/PATH/TO/REPO</string>
+    <key>NOTO_BOT_PROFILE</key>
+    <string>mail</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+  <key>StandardOutPath</key>
+  <string>/PATH/TO/REPO/lark/profiles/mail/larkbot.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/PATH/TO/REPO/lark/profiles/mail/larkbot.err.log</string>
+</dict>
+</plist>

@@ -190,3 +190,14 @@ Retired entries stop influencing drafts immediately.
 Use Lark's **Reply** on any bot message and your reply carries that
 message as context — "and what about for the Berlin office?" continues
 that exact conversation, even days later or across bot restarts.
+
+## If your team runs the dedicated mail bot
+
+Your admin may run email as its own bot (a sibling of the main
+assistant, e.g. "Mailo"). Everything in the email section above then
+happens in a **1:1 DM with the mail bot instead**: ask it anything
+about your own mailbox in plain language, review its draft cards
+(reply `send`, `discard`, or describe a change), and `redo q#N: <how>`
+any time. The privacy rules are identical — it only ever reads YOUR
+mailbox, only in your own DM. The main assistant keeps doing
+everything else.

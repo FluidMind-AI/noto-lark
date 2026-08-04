@@ -102,3 +102,48 @@ def get_path(key: str) -> str:
     """Get a resolved path by key. E.g., get_path('credentials')."""
     cfg = load_config()
     return cfg["_resolved"][key]
+
+
+# ---------------------------------------------------------------------------
+# Bot profiles — run N specialized bots (own Lark app identity, own port,
+# own single-writer state) from ONE repo + shared corpus. The default
+# profile (env unset) is the primary bot with byte-identical legacy
+# behavior; NOTO_BOT_PROFILE=mail runs the dedicated mail bot.
+# ---------------------------------------------------------------------------
+
+def get_profile() -> str:
+    """Active bot profile for THIS process. 'default' when unset."""
+    p = (os.environ.get("NOTO_BOT_PROFILE") or "").strip().lower()
+    return p or "default"
+
+
+def profile_config() -> Dict[str, Any]:
+    """The config `profiles.<name>` block for the active profile.
+    Empty dict for the default profile (which reads the legacy top-level
+    keys) or when the block isn't configured."""
+    prof = get_profile()
+    if prof == "default":
+        return {}
+    return (load_config().get("profiles") or {}).get(prof) or {}
+
+
+def agent_display_name() -> str:
+    """User-facing bot name for this process (per-profile override)."""
+    return (profile_config().get("agent_name")
+            or (load_config().get("agent") or {}).get("name")
+            or "Assistant")
+
+
+def state_dir() -> str:
+    """Directory for this bot process's single-writer state files
+    (event dedupe, bot stats, last-QA). The default profile keeps the
+    legacy lark/ location; every other profile gets an isolated
+    lark/profiles/<name>/ so two bot processes can never clobber each
+    other's state."""
+    home = get_home()
+    prof = get_profile()
+    if prof == "default":
+        return os.path.join(home, "lark")
+    d = os.path.join(home, "lark", "profiles", prof)
+    os.makedirs(d, exist_ok=True)
+    return d

@@ -439,3 +439,28 @@ intermittent empty rc=1 exits from the same cause). Scrubbing
 children with: cwd in a project-free directory (`/private/tmp/...`),
 scrubbed env, AND `stdin=subprocess.DEVNULL`. Symptom signature:
 conversational output referencing things never in your prompt.
+
+## Multi-bot / second-app gotchas
+
+- **User OAuth tokens are app-bound.** A token issued under app A is
+  invalid for app B, and a refresh with the wrong `client_id` is
+  rejected. When the mail surface moves to its own app every `*_mail`
+  identity must re-consent. Token files are stamped with `app_id` at
+  store time and refresh resolves credentials by that stamp
+  (`lark_client.credentials_for_app`) — so one keepalive can serve
+  both apps' tokens.
+- **The mail data-range is per-app.** The second app's tenant token
+  reads NOTHING until "Accessible data range → Email Message" is
+  configured for it in the Console, even if the first app already has
+  the same mailboxes granted.
+- **Tailscale Funnel supports exactly three HTTPS ports** (443, 8443,
+  10000) on one hostname. `tailscale funnel --bg --https=8443 …` adds
+  a second mapping WITHOUT touching the first — safe to assert
+  idempotently from each bot's runner. A fourth bot needs a local
+  reverse-proxy routing by path instead.
+- **Two bot processes must not share single-writer state.** The
+  profile mechanism isolates event-dedupe, bot stats, last-QA and
+  pending-state under `lark/profiles/<name>/`; `lark/state.json`
+  stays owned by the primary bot + sync pipeline. If you add a new
+  state file to the webhook process, route it through
+  `config.state_dir()`.

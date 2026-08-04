@@ -448,3 +448,46 @@ schedule via `deploy/com.noto.mailnightly.plist`), `tools/autodraft-poll.sh`
 (every 15 min: new To-addressed mail → review card with Send/Discard/Edit).
 Keep the host awake: `deploy/com.noto.caffeinate.plist` — sleeping Macs
 skip calendar jobs.
+
+## Multi-bot profiles — run the mail surface as its own bot
+
+The chassis can run **N specialized bots from one repo**: each profile
+is its own process with its own Lark custom app identity, its own port
++ Tailscale Funnel HTTPS port (same stable hostname — Funnel supports
+443/8443/10000), and its own single-writer state under
+`lark/profiles/<name>/`. The shipped profile is `mail`: a dedicated
+email bot so mail traffic (inbox Q&A, auto-draft review cards) doesn't
+clog the knowledge bot's chat or context.
+
+How it works: `NOTO_BOT_PROFILE=mail` makes the process resolve its
+credentials from `credentials.yaml → lark_profiles.mail` (hard error if
+empty — a specialized bot never falls back to the primary app), its
+listen/funnel ports from the config's `profiles.mail` block, and a
+mail-only triage surface (`_triage_mail`): `/mail`, `/inbox`,
+`/playbook`, `redo q#N`, and any DM text = a question about the
+sender's OWN mailbox. Everything else redirects to the primary bot.
+
+Setup:
+1. Create a SECOND custom app in the Lark Console (bot feature,
+   im:message + p2p delivery + send_as_bot + cardkit + contact
+   readonly + the mail scopes incl. USER `offline_access` +
+   `mail:user_mailbox.message:modify`/`:send`; set the mail data-range
+   for its tenant token — data-range is per-app).
+2. Fill `lark_profiles.mail` in credentials.yaml; uncomment
+   `profiles.mail` in the config.
+3. `tailscale funnel --bg --https=8443 127.0.0.1:8089` (the runner
+   re-asserts this on every start).
+4. Install `deploy/com.noto.mailbot.plist` (edit paths). Event
+   subscription URL: `https://<funnel-host>:8443/lark/webhook`.
+5. Re-consent every `*_mail` OAuth identity under the new app
+   (`NOTO_BOT_PROFILE=mail python tools/lark_oauth.py url --identity
+   <u>_mail`) — user tokens are bound to the app that issued them.
+   Token files are app-stamped, so `refresh-all` from EITHER process
+   refreshes each token with the right app's credentials.
+6. Move the autodraft/mail-nightly launchd jobs to the mail profile by
+   adding `NOTO_BOT_PROFILE=mail` to their EnvironmentVariables —
+   atomically (never run both copies: shared mail DBs + cursors).
+
+The primary bot is untouched throughout: with the env var unset,
+behavior (paths, ports, surface) is byte-identical to a pre-profile
+checkout.

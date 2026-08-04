@@ -151,6 +151,59 @@ def check_funnel():
                f"unreachable: {e}", "needs tailscale investigation")
 
 
+def check_mailbot():
+    """Dedicated mail bot (profile=mail) — webhook + funnel. SILENT
+    until com.noto.mailbot is installed in ~/Library/LaunchAgents
+    (pre-launch, nothing to watch). Port/HTTPS-port come from the
+    config's profiles.mail block."""
+    plist = os.path.expanduser(
+        "~/Library/LaunchAgents/com.noto.mailbot.plist")
+    if not os.path.exists(plist):
+        return
+    prof = (load_config().get("profiles") or {}).get("mail") or {}
+    listen = prof.get("webhook_listen") or "127.0.0.1:8089"
+    port = listen.split(":")[1]
+    https_port = prof.get("funnel_https_port") or 8443
+    host = (load_config().get("lark") or {}).get("funnel_host") or ""
+
+    def probe():
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/lark/webhook",
+                data=b'{"type":"url_verification"}',
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                return bool(r.read())
+        except urllib.error.HTTPError:
+            return True
+        except Exception:
+            return False
+    if probe():
+        result("mailbot webhook local", "services", "ok")
+    else:
+        _kickstart("com.noto.mailbot")
+        time.sleep(8)
+        result("mailbot webhook local", "services",
+               "fixed" if probe() else "fail",
+               f"mail bot not answering on :{port}",
+               "kickstart + reprobe")
+
+    if host:
+        try:
+            req = urllib.request.Request(
+                f"https://{host}:{https_port}/lark/webhook", data=b"{}",
+                headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=15)
+            result("mailbot funnel ingress", "services", "ok")
+        except urllib.error.HTTPError:
+            result("mailbot funnel ingress", "services", "ok")
+        except Exception as e:
+            result("mailbot funnel ingress", "services", "fail",
+                   f"unreachable: {e}",
+                   f"tailscale funnel --bg --https={https_port} "
+                   f"127.0.0.1:{port}")
+
+
 # ─────────────────────── scheduled work ───────────────────────
 
 def _freshness(name, path, max_h, fix_cmd=None, fix_label=""):
@@ -538,6 +591,7 @@ def check_error_burst():
 
 CHECKS = [
     check_launchd_jobs, check_webhook_local, check_funnel,
+    check_mailbot,
     check_schedules, check_data_freshness, check_mail_mirrors,
     check_mail_api, check_consents, check_send_verification,
     check_oauth, check_tenant_token,

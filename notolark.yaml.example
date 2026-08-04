@@ -38,3 +38,16 @@ h2:
   reminders_enabled: false    # per-user Lark task lists + morning digest
                               # (needs task:* user scopes + re-OAuth +
                               #  deploy/com.noto.remindersdigest.plist)
+
+# --- Bot profiles (optional) ------------------------------------------
+# One repo, N specialized bots. A profile = its own Lark app identity
+# (credentials.yaml -> lark_profiles.<name>), its own listen port +
+# funnel HTTPS port (same stable hostname), and its own single-writer
+# state under lark/profiles/<name>/. A process opts in via the
+# NOTO_BOT_PROFILE env var; unset = the primary bot, unchanged.
+# See docs/setup.md "Multi-bot profiles".
+# profiles:
+#   mail:
+#     agent_name: "Mailo"             # this bot's display name
+#     webhook_listen: "127.0.0.1:8089"
+#     funnel_https_port: 8443         # Funnel supports 443/8443/10000

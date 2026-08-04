@@ -131,9 +131,17 @@ def _token_path(identity: Optional[str] = None) -> str:
 
 
 def _redirect_uri() -> str:
+    """OAuth callback URL for THIS process's bot profile. The default
+    profile serves on the funnel's :443; other profiles ride the same
+    funnel host on their own HTTPS port (profiles.<name>.funnel_https_port
+    in the config), so each app's consent flow lands on ITS bot's
+    webhook server."""
+    from config import profile_config
     cfg = load_config().get("lark", {}) or {}
     host = cfg.get("funnel_host", "")
-    return f"https://{host}/lark/oauth/callback"
+    https_port = int(profile_config().get("funnel_https_port") or 443)
+    port_part = "" if https_port == 443 else f":{https_port}"
+    return f"https://{host}{port_part}/lark/oauth/callback"
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +191,8 @@ def _token_request(body: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _store(payload: Dict[str, Any],
-           identity: Optional[str] = None) -> Dict[str, Any]:
+           identity: Optional[str] = None,
+           app_id: str = "") -> Dict[str, Any]:
     now = int(time.time())
     ident = _resolve_identity(identity)
     # Diagnostic — what scopes did Lark actually grant, and did we get a
@@ -211,6 +220,10 @@ def _store(payload: Dict[str, Any],
         "refresh_expires_at": refresh_expires_at,
         "obtained_at": now,
         "identity": ident,
+        # Which Lark app ISSUED this token — refresh must use the same
+        # app's client_id/secret (multi-bot: two apps coexist).
+        # Preserved from the previous record when the caller can't say.
+        "app_id": app_id or prev.get("app_id", ""),
     }
     p = _token_path(ident)
     tmp = p + ".tmp"
@@ -264,12 +277,17 @@ def exchange_code(code: str,
                 f"{actual or 'unknown'!r} but this identity drafts into "
                 f"{expected!r}. Log into Lark as {expected} and click the "
                 f"link again.")
-    return _store(payload, identity=identity)
+    return _store(payload, identity=identity, app_id=creds["app_id"])
 
 
 def _refresh(rec: Dict[str, Any],
              identity: Optional[str] = None) -> Dict[str, Any]:
-    creds = load_lark_credentials()
+    # Refresh with the app that ISSUED the token (tokens are app-bound;
+    # a mail-app token refreshed with the primary app's client_id is
+    # rejected). Legacy records without app_id resolve to this
+    # process's creds — exactly the old behavior.
+    from lark_client import credentials_for_app
+    creds = credentials_for_app(rec.get("app_id") or "")
     if not rec.get("refresh_token"):
         raise RuntimeError("no refresh_token stored — re-authorize")
     if time.time() > rec.get("refresh_expires_at", 0):
@@ -281,7 +299,8 @@ def _refresh(rec: Dict[str, Any],
         "client_secret": creds["app_secret"],
         "refresh_token": rec["refresh_token"],
     })
-    return _store(payload, identity=identity or rec.get("identity"))
+    return _store(payload, identity=identity or rec.get("identity"),
+                  app_id=creds["app_id"])
 
 
 # ---------------------------------------------------------------------------
