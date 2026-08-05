@@ -450,7 +450,7 @@ def _triage(text: str, sender_open_id: str, chat_id: str,
             "my email", "my emails", "my inbox", "my mailbox",
             "my sent mail", "did i reply", "did i email",
             "did i ever send", "in my mail", "search my mail")):
-        return ("reply", _cmd_mail(q, sender_open_id, chat_type))
+        return ("mail_q", q)     # streaming-card mailbox answer
 
     cmd = parse_command(q)
     if cmd:
@@ -477,7 +477,9 @@ def _triage(text: str, sender_open_id: str, chat_id: str,
         if name == "nuggets":
             return ("reply", _cmd_nuggets(args, sender_open_id))
         if name in ("mail", "inbox"):
-            return ("reply", _cmd_mail(args, sender_open_id, chat_type))
+            if not (args or "").strip():
+                return ("reply", _cmd_mail("", sender_open_id, chat_type))
+            return ("mail_q", args)   # streaming-card mailbox answer
         if name == "playbook":
             return ("reply", _cmd_playbook(args, sender_open_id))
         if name in ("instructions", "manual"):
@@ -651,9 +653,12 @@ def _triage_mail(text: str, sender_open_id: str, chat_id: str,
     says that isn't a command is treated as a question about the
     sender's OWN mailbox; non-mail asks get a redirect to the main bot.
 
-    Only ever returns ('reply', text) — so the worker's agent/Q&A
-    paths, per-user-memory read AND passive memory write (both gated
-    on kind != 'reply') are all naturally inert in this profile."""
+    Returns ('reply', text) for guards/help/redirects/redo, or
+    ('mail_q', question) for mailbox questions — the worker gives
+    mail_q the streaming-card treatment. The agent/Q&A paths and the
+    per-user-memory read/write stay inert in this profile: both
+    memory gates exclude 'reply' AND 'mail_q' (mailbox answers must
+    never seed passive memory writes)."""
     from lark_sanitizer import sanitize_lark_content
     clean = sanitize_lark_content(text, sender_open_id, sender_open_id,
                                   trust)
@@ -724,7 +729,9 @@ def _triage_mail(text: str, sender_open_id: str, chat_id: str,
         if name == "help":
             return ("reply", _mail_help())
         if name in ("mail", "inbox"):
-            return ("reply", _cmd_mail(args, sender_open_id, chat_type))
+            if not (args or "").strip():
+                return ("reply", _cmd_mail("", sender_open_id, chat_type))
+            return ("mail_q", args)   # streaming-card mailbox answer
         if name == "playbook":
             return ("reply", _cmd_playbook(args, sender_open_id))
         # Recognized main-bot command — redirect, don't half-serve.
@@ -738,8 +745,9 @@ def _triage_mail(text: str, sender_open_id: str, chat_id: str,
                 f"Hi! I'm {me} — ask me anything about your email "
                 "(`/help` for more)")
 
-    # Default: a DM to the mail bot IS a mailbox question.
-    return ("reply", _cmd_mail(q, sender_open_id, chat_type))
+    # Default: a DM to the mail bot IS a mailbox question — answered
+    # on a streaming card by the worker.
+    return ("mail_q", q)
 
 
 def _route(text: str, sender_open_id: str, chat_id: str, trust: str,
@@ -760,6 +768,10 @@ def handle_message(text: str, sender_open_id: str, chat_id: str,
     kind, val = _route(text, sender_open_id, chat_id, trust)
     if kind == "reply":
         return val
+    if kind == "mail_q":
+        # No chat_type here → the gate inside refuses (same as before
+        # mail_q existed; this path is selftests + streaming fallback).
+        return _cmd_mail(val, sender_open_id, "")
     return _answer_question(val, _history(chat_id), chat_id)
 
 
@@ -1393,6 +1405,8 @@ def _kind_to_workflow(kind: str) -> str:
     Keep this small — the dashboard groups by these labels."""
     if kind == "question":
         return "q_and_a"
+    if kind == "mail_q":
+        return "mail"
     if kind == "reply":
         return "command"
     return "unknown"
@@ -1608,7 +1622,7 @@ def _worker():
             # bypass the LLM entirely and the context would be wasted.
             user_context = ""
             if (job.get("chat_type") == "p2p"
-                    and kind != "reply"
+                    and kind not in ("reply", "mail_q")
                     and not flagged
                     and job.get("sender")):
                 try:
@@ -1665,6 +1679,49 @@ def _worker():
                     print(f"[feedback] capture error: {fbe}",
                           file=sys.stderr, flush=True)
                 _maybe_learn_recipe(user_text, chat_id)
+
+            if kind == "mail_q":
+                # Own-mailbox Q&A — long synthesis, so it gets the same
+                # streaming-card UX as the research path (plain one-shot
+                # text was the old /mail behavior). Gate + refusal texts
+                # stay _cmd_mail's.
+                from mail_retrieval import user_for_asker
+                _mu = user_for_asker(job.get("sender", ""),
+                                     job.get("chat_type", ""))
+                if _mu is None:
+                    reply = _cmd_mail(val, job.get("sender", ""),
+                                      job.get("chat_type", ""))
+                    mid_ = client.send_text(chat_id, reply)
+                    _record_bot(chat_id, reply, msg_id=mid_ or '')
+                    continue
+                card = None
+                try:
+                    card = CardStream(
+                        client, chat_id,
+                        title=f"📮 {agent_display_name()}", summary=val)
+                    card.start()
+                except Exception as e:
+                    print(f"[lark_bot] mail card unavailable ({e}); "
+                          "plain reply", file=sys.stderr, flush=True)
+                    card = None
+                try:
+                    from mail_retrieval import answer as _mail_answer
+                    text = _mail_answer(_mu, val, card=card)
+                    if card:
+                        card.finalize(answer=text)
+                    else:
+                        client.send_text(chat_id, text)
+                    _record_bot(chat_id, text)
+                except Exception as e:
+                    print(f"[lark_bot] mail_q failed ({_mu}): {e}",
+                          file=sys.stderr, flush=True)
+                    msg = ("Something went wrong searching your mailbox "
+                           "— I've logged the error.")
+                    if card:
+                        card.finalize(status=msg, error=True)
+                    else:
+                        client.send_text(chat_id, msg)
+                continue
 
             if kind == "reply":
                 # Commands / guards — fast, plain text, no card. Record
@@ -1754,7 +1811,7 @@ def _worker():
             # but the same try/except hygiene as
             # _maybe_capture_feedback above).
             if (job.get("chat_type") == "p2p"
-                    and kind != "reply"
+                    and kind not in ("reply", "mail_q")
                     and not flagged
                     and job.get("sender")):
                 try:
@@ -2443,11 +2500,12 @@ def _selftest() -> int:
     mk_nl, mv_nl = _triage_mail("did they reply about the contract?",
                                 "ouX", "oc1", "employee",
                                 chat_type="p2p")
-    if (mk_grp == mk_help == mk_cmd == mk_nl == "reply"
+    if (mk_grp == mk_help == mk_cmd == "reply"
+            and mk_nl == "mail_q"
             and "1:1 DM" in mv_grp
             and "email" in mv_help.lower()
             and "job" in mv_cmd
-            and "mailbox" in mv_nl.lower()):
+            and mv_nl == "did they reply about the contract?"):
         print("PASS: mail-profile triage (group gate / help / "
               "redirect / NL→own-mailbox)")
     else:
