@@ -464,3 +464,24 @@ conversational output referencing things never in your prompt.
   stays owned by the primary bot + sync pipeline. If you add a new
   state file to the webhook process, route it through
   `config.state_dir()`.
+
+## Second-app launch gotchas (learned launching the mail bot, 2026-08-05)
+
+- **open_ids are PER-APP.** The same human has a DIFFERENT `ou_…` under
+  every custom app. Every open_id-keyed map (operators, mailbox owners,
+  DM-notification targets, admin registries) must be re-resolved under
+  the new app — sending to another app's open_id fails with
+  `99992361 "open_id cross app"`. Resolve by email via
+  `POST /contact/v3/users/batch_get_id?user_id_type=open_id` (needs
+  scope `contact:user.id:readonly`, no admin approval). Users invisible
+  to the app (not in App availability) come back with NO user_id —
+  which doubles as an availability probe.
+- **"Can't message this bot yet"** in the DM box = the RELEASED version
+  lacks a message-receive path. Requirements: bot feature + receive
+  event + send permission, all SAVED **and included in a published,
+  approved version**; activation lags ~1 min after release.
+- **Subscription mode trap:** "Receive events through persistent
+  connection (Recommended)" unlocks the chat box but delivers events
+  over a WebSocket to Lark's SDK — a webhook bot receives NOTHING
+  (messages silently vanish; log shows zero POSTs). Webhook bots must
+  select "Send notifications to developer's server".
