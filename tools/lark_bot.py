@@ -693,26 +693,36 @@ def _triage_mail(text: str, sender_open_id: str, chat_id: str,
                   flush=True)
             return ("reply", "Redo hit an error — I've logged it.")
 
+    def _mail_help() -> str:
+        return (f"👋 I'm **{me}** — your email assistant. In this "
+                "DM I only ever look at YOUR mailbox, never anyone "
+                "else's.\n\n"
+                "**Just ask about your mail in plain language** — "
+                "`did they ever reply about the contract?` · "
+                "`what's still unanswered from this week?`\n\n"
+                "**Draft replies:** when an email addressed to you "
+                "needs an answer, I place a draft in your Mail "
+                "Drafts and send you a review card — reply `send`, "
+                "`discard`, or just tell me what to change "
+                "(`shorter, confirm Thursday`).\n\n"
+                "Admins can also ask about the house playbook "
+                "(`/playbook`).\n\n"
+                f"For everything else, talk to **{primary}**.")
+
+    # NL capability questions get the intro, not an inbox search —
+    # conservative match so real mail questions never trip it
+    # (natural language first, commands are conveniences).
+    if re.fullmatch(
+            r"(what can you do|what do you do|what can you help( me)?"
+            r" with|how do you work|how do i use you|who are you|"
+            r"what are you)\s*[?.!]*", q.strip().lower()):
+        return ("reply", _mail_help())
+
     cmd = parse_command(q)
     if cmd:
         name, args = cmd
         if name == "help":
-            return ("reply",
-                    f"👋 I'm **{me}** — your email assistant. In this "
-                    "DM I only ever look at YOUR mailbox, never anyone "
-                    "else's.\n\n"
-                    "**Ask about your mail** (no command needed): "
-                    "`did they ever reply about the contract?` · "
-                    "`what's still unanswered from this week?`\n\n"
-                    "**Draft replies:** when an email addressed to you "
-                    "needs an answer, I place a draft in your Mail "
-                    "Drafts and send you a review card — reply `send`, "
-                    "`discard`, or just tell me what to change "
-                    "(`shorter, confirm Thursday`). `redo q#8: <how>` "
-                    "works any time.\n\n"
-                    "**Admin:** `/playbook` — the house response "
-                    "playbook.\n\n"
-                    f"For everything else, talk to **{primary}**.")
+            return ("reply", _mail_help())
         if name in ("mail", "inbox"):
             return ("reply", _cmd_mail(args, sender_open_id, chat_type))
         if name == "playbook":
